@@ -94,7 +94,9 @@ pub const Gl = struct {
     deleteProgram:        *const fn (GLuint) callconv(.c) void,
     getUniformLocation:   *const fn (GLuint, [*:0]const GLchar) callconv(.c) GLint,
     uniform1i:            *const fn (GLint, GLint) callconv(.c) void,
+    uniform1f:            *const fn (GLint, GLfloat) callconv(.c) void,
     uniform2f:            *const fn (GLint, GLfloat, GLfloat) callconv(.c) void,
+    uniform4f:            *const fn (GLint, GLfloat, GLfloat, GLfloat, GLfloat) callconv(.c) void,
     drawArrays:           *const fn (GLenum, GLint, GLsizei) callconv(.c) void,
     activeTexture:        *const fn (GLenum) callconv(.c) void,
 
@@ -127,7 +129,9 @@ pub const Gl = struct {
             .deleteProgram        = @ptrCast(@alignCast(p.get(getProcFn, "glDeleteProgram"))),
             .getUniformLocation   = @ptrCast(@alignCast(p.get(getProcFn, "glGetUniformLocation"))),
             .uniform1i            = @ptrCast(@alignCast(p.get(getProcFn, "glUniform1i"))),
+            .uniform1f            = @ptrCast(@alignCast(p.get(getProcFn, "glUniform1f"))),
             .uniform2f            = @ptrCast(@alignCast(p.get(getProcFn, "glUniform2f"))),
+            .uniform4f            = @ptrCast(@alignCast(p.get(getProcFn, "glUniform4f"))),
             .drawArrays           = @ptrCast(@alignCast(p.get(getProcFn, "glDrawArrays"))),
             .activeTexture        = @ptrCast(@alignCast(p.get(getProcFn, "glActiveTexture"))),
         };

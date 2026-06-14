@@ -73,10 +73,23 @@ _Goal: a single polished app that exercises every completed subsystem — the zu
 - [x] drawTextScaled() on both software + OpenGL backends for large headings
 - [x] Validated live: all 5 pages navigate correctly, all widgets interactive
 
+## ✅ Milestone 9 — Fluent Visual Polish _(complete)_
+_Goal: Mica/Acrylic DWM backdrop, rounded corners, alpha blending — closing the gap with WPF UI._
+
+- [x] Dark title bar + Mica backdrop via `DwmSetWindowAttribute` (Win32) — title bar has frosted glass blur
+- [x] Rounded window corners via `DWMWA_WINDOW_CORNER_PREFERENCE` — Win32 system-level rounding
+- [x] `fillRoundRect(rect, radius, color)` in software renderer — pixel-accurate corner arc with alpha blend
+- [x] Alpha blending in software renderer — `blendPixel` composites semi-transparent draws
+- [x] `fillRoundRect` in OpenGL renderer — SDF fragment shader with `smoothstep` anti-aliasing
+- [x] `uniform1f` / `uniform4f` in `gl.Gl` for SDF uniforms
+- [x] Showcase updated: cards, nav items, search bar all use rounded corners
+- [x] Validated live: both software and OpenGL backends render rounded cards correctly
+
 ## Backlog
 - Accessibility (a11y) tree
 - Drag and drop
 - IME / international input
-- Animation system
+- Animation system (hover fade ~150ms ease-out, page transitions)
+- Mica client-area compositing (requires DirectComposition or UpdateLayeredWindow)
 - CSS-like style sheets
 - Hot-reload for styles

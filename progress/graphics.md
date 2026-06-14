@@ -1,6 +1,6 @@
 # Graphics Progress
 
-## Status: Complete (M4 + M8)
+## Status: Complete (M4 + M8 + M9)
 
 ### Done
 - Software renderer (`src/graphics/software/renderer.zig`) — DIB pixel buffer, clear/fillRect/drawText/drawTextScaled
@@ -12,6 +12,9 @@
 - Backend shim (`src/graphics/renderer.zig`) — comptime-selects backend
 - `drawTextScaled(scale)` on both backends — integer-scaled glyphs for headings
 - Build option `-Dbackend=software|opengl`
+- `fillRoundRect(rect, radius, color)` in software renderer — pixel-accurate SDF with alpha blending
+- `fillRoundRect` in OpenGL renderer — dedicated SDF fragment shader (GLSL 3.30 `smoothstep` AA)
+- `uniform1f` / `uniform4f` added to `gl.Gl` for SDF uniforms
 
 ### Up Next (M7)
 - Vulkan renderer backend

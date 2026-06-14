@@ -40,6 +40,40 @@ const FRAG_SRC: [*:0]const u8 =
     \\}
 ;
 
+// ── Rounded-rect SDF shaders ─────────────────────────────────────────────────
+// Separate program: draws a single quad with a signed-distance-field frag test.
+// Flush the batch first, draw with uniforms, then resume batching.
+
+const VERT_ROUND: [*:0]const u8 =
+    \\#version 330 core
+    \\layout(location=0) in vec2 pos;
+    \\uniform vec2 u_screen;
+    \\void main() {
+    \\    vec2 ndc = vec2(pos.x / u_screen.x * 2.0 - 1.0,
+    \\                    1.0 - pos.y / u_screen.y * 2.0);
+    \\    gl_Position = vec4(ndc, 0.0, 1.0);
+    \\}
+;
+
+const FRAG_ROUND: [*:0]const u8 =
+    \\#version 330 core
+    \\out vec4 frag;
+    \\uniform vec4  u_rect;
+    \\uniform float u_radius;
+    \\uniform vec4  u_color;
+    \\uniform vec2  u_screen;
+    \\float roundedBoxSDF(vec2 p, vec2 b, float r) {
+    \\    return length(max(abs(p) - b + r, 0.0)) - r;
+    \\}
+    \\void main() {
+    \\    vec2 fc = vec2(gl_FragCoord.x, u_screen.y - gl_FragCoord.y);
+    \\    vec2 center = vec2(u_rect.x + u_rect.z * 0.5, u_rect.y + u_rect.w * 0.5);
+    \\    float dist = roundedBoxSDF(fc - center, vec2(u_rect.z, u_rect.w) * 0.5, u_radius);
+    \\    float alpha = 1.0 - smoothstep(-0.5, 0.5, dist);
+    \\    frag = vec4(u_color.rgb, u_color.a * alpha);
+    \\}
+;
+
 // ── Vertex layout: [x,y, u,v, r,g,b,a]  (8 floats per vertex) ───────────────
 const FLOATS_PER_VERT: usize = 8;
 const VERTS_PER_QUAD:  usize = 6; // 2 triangles
@@ -52,10 +86,18 @@ pub const Renderer = struct {
     prog:       gl.GLuint,
     vao:        gl.GLuint,
     vbo:        gl.GLuint,
-    tex_white:  gl.GLuint, // 1×1 white texture for solid rects
-    tex_font:   gl.GLuint, // 768×8 font atlas
+    tex_white:  gl.GLuint,
+    tex_font:   gl.GLuint,
     u_screen:   gl.GLint,
     u_tex:      gl.GLint,
+    // Rounded-rect SDF program
+    prog_round:    gl.GLuint,
+    vao_round:     gl.GLuint,
+    vbo_round:     gl.GLuint,
+    u_rnd_screen:  gl.GLint,
+    u_rnd_rect:    gl.GLint,
+    u_rnd_radius:  gl.GLint,
+    u_rnd_color:   gl.GLint,
     width:      u32,
     height:     u32,
     buf:        [MAX_VERTS * FLOATS_PER_VERT]f32 = undefined,
@@ -113,6 +155,26 @@ pub const Renderer = struct {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+        // ── Rounded-rect SDF program ──────────────────────────────────────────
+        const prog_round = try compileProgram2(g, VERT_ROUND, FRAG_ROUND);
+
+        var vao_round: gl.GLuint = 0;
+        var vbo_round: gl.GLuint = 0;
+        g.genVertexArrays(1, @as(*[1]gl.GLuint, &vao_round));
+        g.genBuffers(1, @as(*[1]gl.GLuint, &vbo_round));
+        g.bindVertexArray(vao_round);
+        g.bindBuffer(gl.ARRAY_BUFFER, vbo_round);
+        g.bufferData(gl.ARRAY_BUFFER, 6 * 2 * @sizeOf(f32), null, gl.DYNAMIC_DRAW);
+        g.enableVertexAttribArray(0);
+        g.vertexAttribPointer(0, 2, gl.FLOAT, gl.FALSE, 2 * @sizeOf(f32), @ptrFromInt(0));
+        g.bindVertexArray(0);
+
+        g.useProgram(prog_round);
+        const u_rnd_screen = g.getUniformLocation(prog_round, "u_screen");
+        const u_rnd_rect   = g.getUniformLocation(prog_round, "u_rect");
+        const u_rnd_radius = g.getUniformLocation(prog_round, "u_radius");
+        const u_rnd_color  = g.getUniformLocation(prog_round, "u_color");
+
         // ── State ─────────────────────────────────────────────────────────────
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -125,24 +187,34 @@ pub const Renderer = struct {
         gl.viewport(0, 0, @intCast(width), @intCast(height));
 
         return .{
-            .ctx       = ctx,
-            .gl_fns    = g,
-            .prog      = prog,
-            .vao       = vao,
-            .vbo       = vbo,
-            .tex_white = tex_white,
-            .tex_font  = tex_font,
-            .u_screen  = u_screen,
-            .u_tex     = u_tex,
-            .width     = width,
-            .height    = height,
+            .ctx          = ctx,
+            .gl_fns       = g,
+            .prog         = prog,
+            .vao          = vao,
+            .vbo          = vbo,
+            .tex_white    = tex_white,
+            .tex_font     = tex_font,
+            .u_screen     = u_screen,
+            .u_tex        = u_tex,
+            .prog_round   = prog_round,
+            .vao_round    = vao_round,
+            .vbo_round    = vbo_round,
+            .u_rnd_screen = u_rnd_screen,
+            .u_rnd_rect   = u_rnd_rect,
+            .u_rnd_radius = u_rnd_radius,
+            .u_rnd_color  = u_rnd_color,
+            .width        = width,
+            .height       = height,
         };
     }
 
     pub fn deinit(self: *Renderer) void {
         self.gl_fns.deleteProgram(self.prog);
+        self.gl_fns.deleteProgram(self.prog_round);
         self.gl_fns.deleteBuffers(1, @as(*[1]gl.GLuint, &self.vbo));
+        self.gl_fns.deleteBuffers(1, @as(*[1]gl.GLuint, &self.vbo_round));
         self.gl_fns.deleteVertexArrays(1, @as(*[1]gl.GLuint, &self.vao));
+        self.gl_fns.deleteVertexArrays(1, @as(*[1]gl.GLuint, &self.vao_round));
         gl.deleteTextures(1, @as(*[1]gl.GLuint, &self.tex_white));
         gl.deleteTextures(1, @as(*[1]gl.GLuint, &self.tex_font));
         self.ctx.deinit();
@@ -184,6 +256,39 @@ pub const Renderer = struct {
 
     pub fn textWidthScaled(text: []const u8, scale: u32) u32 {
         return @intCast(text.len * atlas.GLYPH_W * scale);
+    }
+
+    /// Draw a filled rounded rectangle using an SDF fragment shader.
+    /// Flushes the batch first so mixing with fillRect is safe.
+    pub fn fillRoundRect(self: *Renderer, rect: Rect, radius: u32, color: Color) void {
+        self.flush();
+        const g = &self.gl_fns;
+
+        const x0: f32 = @floatFromInt(rect.x);
+        const y0: f32 = @floatFromInt(rect.y);
+        const x1: f32 = @floatFromInt(rect.right());
+        const y1: f32 = @floatFromInt(rect.bottom());
+        const quad = [6][2]f32{
+            .{ x0, y0 }, .{ x1, y0 }, .{ x1, y1 },
+            .{ x0, y0 }, .{ x1, y1 }, .{ x0, y1 },
+        };
+
+        g.useProgram(self.prog_round);
+        g.uniform2f(self.u_rnd_screen, @floatFromInt(self.width), @floatFromInt(self.height));
+        g.uniform4f(self.u_rnd_rect, x0, y0, @floatFromInt(rect.width), @floatFromInt(rect.height));
+        g.uniform1f(self.u_rnd_radius, @floatFromInt(radius));
+        const cf = color.toF32();
+        g.uniform4f(self.u_rnd_color, cf[0], cf[1], cf[2], cf[3]);
+
+        g.bindVertexArray(self.vao_round);
+        g.bindBuffer(gl.ARRAY_BUFFER, self.vbo_round);
+        g.bufferData(gl.ARRAY_BUFFER, @sizeOf([6][2]f32), &quad[0][0], gl.DYNAMIC_DRAW);
+        g.drawArrays(gl.TRIANGLES, 0, 6);
+        g.bindVertexArray(0);
+
+        // Restore main batch program
+        g.useProgram(self.prog);
+        g.uniform2f(self.u_screen, @floatFromInt(self.width), @floatFromInt(self.height));
     }
 
     pub fn present(self: *Renderer) void {
@@ -258,15 +363,19 @@ pub const Renderer = struct {
 };
 
 fn compileProgram(g: gl.Gl) !gl.GLuint {
+    return compileProgram2(g, VERT_SRC, FRAG_SRC);
+}
+
+fn compileProgram2(g: gl.Gl, vert: [*:0]const u8, frag: [*:0]const u8) !gl.GLuint {
     const vs = g.createShader(gl.VERTEX_SHADER);
-    g.shaderSource(vs, 1, @as(*const [1][*:0]const gl.GLchar, &VERT_SRC), null);
+    g.shaderSource(vs, 1, @as(*const [1][*:0]const gl.GLchar, &vert), null);
     g.compileShader(vs);
     var ok: gl.GLint = 0;
     g.getShaderiv(vs, gl.COMPILE_STATUS, &ok);
     if (ok == 0) return error.VertexShaderCompileFailed;
 
     const fs = g.createShader(gl.FRAGMENT_SHADER);
-    g.shaderSource(fs, 1, @as(*const [1][*:0]const gl.GLchar, &FRAG_SRC), null);
+    g.shaderSource(fs, 1, @as(*const [1][*:0]const gl.GLchar, &frag), null);
     g.compileShader(fs);
     g.getShaderiv(fs, gl.COMPILE_STATUS, &ok);
     if (ok == 0) return error.FragmentShaderCompileFailed;

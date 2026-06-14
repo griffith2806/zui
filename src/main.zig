@@ -153,13 +153,10 @@ pub fn main(init: std.process.Init) !void {
         app.renderer.drawTextScaled("zui", 16, 12, ACCENT, 2);
         app.renderer.drawText("gallery", 16 + 3 * 8 * 2 + 8, 20, FG_TER);
 
-        // Search bar at top of nav
+        // Search bar at top of nav — rounded pill style
         const nav_search = zui.Rect.init(8, HDR_H + 8 + @as(i32, NAV_ITEMS.len) * 44 + 8, NAV_W - 16, 30);
-        app.renderer.fillRect(nav_search, if (dark_mode) BG_INPUT else zui.Color.rgb(250,250,255));
-        app.renderer.fillRect(zui.Rect.init(nav_search.x, nav_search.y, nav_search.width, 1), SEP);
-        app.renderer.fillRect(zui.Rect.init(nav_search.x, nav_search.bottom()-1, nav_search.width, 1), SEP);
-        app.renderer.fillRect(zui.Rect.init(nav_search.x, nav_search.y, 1, nav_search.height), SEP);
-        app.renderer.fillRect(zui.Rect.init(nav_search.right()-1, nav_search.y, 1, nav_search.height), SEP);
+        app.renderer.fillRoundRect(nav_search, 6, SEP);
+        app.renderer.fillRoundRect(zui.Rect.init(nav_search.x+1, nav_search.y+1, nav_search.width-2, nav_search.height-2), 5, if (dark_mode) BG_INPUT else zui.Color.rgb(250,250,255));
         app.renderer.drawText("Search...", nav_search.x + 10, nav_search.y + 10, FG_TER);
 
         // Nav items
@@ -167,8 +164,8 @@ pub fn main(init: std.process.Init) !void {
             const nr = nav_rects[i];
             const is_active = item.page == page;
             if (is_active) {
-                app.renderer.fillRect(nr, NAV_ITEM_A);
-                app.renderer.fillRect(zui.Rect.init(nr.x, nr.y + 6, 3, nr.height - 12), ACCENT);
+                app.renderer.fillRoundRect(nr, 6, NAV_ITEM_A);
+                app.renderer.fillRoundRect(zui.Rect.init(nr.x, nr.y + 6, 4, nr.height - 12), 2, ACCENT);
             }
             const ic_color = if (is_active) ACCENT else FG_TER;
             const tx_color = if (is_active) FG else FG_SEC;
@@ -177,7 +174,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         // Version at bottom of nav
-        app.renderer.drawText("v0.4 - M8 Showcase", 10, @as(i32,H) - 20, FG_TER);
+        app.renderer.drawText("v0.5 - M9 Visual Polish", 10, @as(i32,H) - 20, FG_TER);
 
         // ════════════════════════════════════════════════════════════════════
         // CONTENT AREA — top bar
@@ -279,7 +276,8 @@ fn drawDashboard(r: *zui.Renderer, counter: *i32, dark_mode: bool, _: zui.Theme)
         "M2  Widgets + Signal(T)",
         "M3  Theming + TextField + Grid",
         "M4  OpenGL 3.3 core backend",
-        "M8  Showcase (this app)",
+        "M8  Showcase gallery",
+        "M9  Mica + rounded corners",
     };
     for (features, 0..) |feat, i| {
         r.fillRect(zui.Rect.init(feat_card.x + 16, feat_card.y + 36 + @as(i32,@intCast(i)) * 24, 6, 6), ACCENT);
@@ -580,12 +578,10 @@ fn drawAbout(r: *zui.Renderer, about_expanded: *bool, dark_mode: bool) void {
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn drawCard(r: *zui.Renderer, rect: zui.Rect, dark_mode: bool) void {
-    const bg = if (dark_mode) BG_CARD else zui.Color.rgb(255,255,255);
-    r.fillRect(rect, bg);
-    r.fillRect(zui.Rect.init(rect.x, rect.y, rect.width, 1), SEP);
-    r.fillRect(zui.Rect.init(rect.x, rect.bottom()-1, rect.width, 1), SEP);
-    r.fillRect(zui.Rect.init(rect.x, rect.y, 1, rect.height), SEP);
-    r.fillRect(zui.Rect.init(rect.right()-1, rect.y, 1, rect.height), SEP);
+    const bg  = if (dark_mode) BG_CARD else zui.Color.rgb(255,255,255);
+    // 1px rounded outline then filled rounded body
+    r.fillRoundRect(rect, 9, SEP);
+    r.fillRoundRect(zui.Rect.init(rect.x+1, rect.y+1, rect.width-2, rect.height-2), 8, bg);
 }
 
 fn sectionLabel(r: *zui.Renderer, x: i32, y: i32, label: []const u8) void {

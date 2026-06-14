@@ -104,6 +104,55 @@ pub const Renderer = struct {
         return @intCast(text.len * font.GLYPH_W * scale);
     }
 
+    /// Alpha-blend `color` over the pixel at (x, y). Skips out-of-bounds.
+    fn blendPixel(self: *Renderer, x: u32, y: u32, color: Color) void {
+        if (x >= self.width or y >= self.height) return;
+        const idx = y * self.width + x;
+        if (color.a == 255) {
+            self.pixels[idx] = toPixel(color);
+        } else if (color.a > 0) {
+            const bg  = self.pixels[idx];
+            const bg_r: u32 = (bg >> 16) & 0xFF;
+            const bg_g: u32 = (bg >> 8) & 0xFF;
+            const bg_b: u32 = bg & 0xFF;
+            const af  = @as(u32, color.a);
+            const oma = 255 - af;
+            const r = (color.r * af + bg_r * oma) / 255;
+            const g = (color.g * af + bg_g * oma) / 255;
+            const b = (color.b * af + bg_b * oma) / 255;
+            self.pixels[idx] = (r << 16) | (g << 8) | b;
+        }
+    }
+
+    /// Draw a filled rounded rectangle. `radius` is clamped to half the
+    /// shorter side. Alpha in `color` is composited via `blendPixel`.
+    pub fn fillRoundRect(self: *Renderer, rect: Rect, radius: u32, color: Color) void {
+        const r: i32 = @intCast(@min(radius, @min(rect.width, rect.height) / 2));
+        const x0 = @max(0, rect.x);
+        const y0 = @max(0, rect.y);
+        const x1 = @min(@as(i32, @intCast(self.width)),  rect.right());
+        const y1 = @min(@as(i32, @intCast(self.height)), rect.bottom());
+        if (x0 >= x1 or y0 >= y1) return;
+        var y = y0;
+        while (y < y1) : (y += 1) {
+            var x = x0;
+            while (x < x1) : (x += 1) {
+                const in_left  = x < rect.x + r;
+                const in_right = x >= rect.right() - r;
+                const in_top   = y < rect.y + r;
+                const in_bot   = y >= rect.bottom() - r;
+                if ((in_left or in_right) and (in_top or in_bot)) {
+                    const cx: i32 = if (in_left) rect.x + r else rect.right() - r;
+                    const cy: i32 = if (in_top)  rect.y + r else rect.bottom() - r;
+                    const dx = x - cx;
+                    const dy = y - cy;
+                    if (dx * dx + dy * dy > r * r) continue;
+                }
+                self.blendPixel(@intCast(x), @intCast(y), color);
+            }
+        }
+    }
+
     fn toPixel(c: Color) u32 {
         return (@as(u32, c.r) << 16) | (@as(u32, c.g) << 8) | @as(u32, c.b);
     }
