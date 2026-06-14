@@ -107,3 +107,37 @@ Examples:
 
 - Use `zig build --watch` for continuous rebuild on file save during development.
 - In `build.zig`, prefer `run_cmd.step.dependOn(&exe.step)` over `b.getInstallStep()` for the `run` step to skip the install copy on every run.
+
+## UI Validation — Required
+
+**After any visual change to a widget or page, validate it in the running app using the `ui-automation` MCP tools.** Do not rely on "it compiles" — always confirm the rendered output looks correct.
+
+### Workflow
+
+1. Launch the app: `zig build run` (use `Start-Process` so it runs in the background)
+2. Wait ~3s for the window to appear: `mcp__ui-automation__wait { seconds: 3 }`
+3. Focus and screenshot: `mcp__ui-automation__get_page_state { window_title: "zui" }`
+4. Navigate to the relevant page with: `mcp__ui-automation__click_element { window_title: "zui", element_name: "Controls" }`
+5. Compare to WPF UI Gallery as the visual reference: `mcp__ui-automation__screenshot_window { title: "WPF UI Gallery" }`
+
+### Key tools
+
+| Tool | When to use |
+|------|-------------|
+| `get_page_state` | Full visual + UIA dump in one call — use this first |
+| `click_element` | Navigate by element name, no coordinates needed |
+| `click_and_screenshot` | Click + immediate screenshot, fastest for navigation |
+| `screenshot_window` | Annotated=true gives screen-coordinate grid for precise clicks |
+| `get_ui_elements` | Lists all interactive elements with their screen-center coords |
+| `scroll_in_window` | Scroll content area without needing coordinates |
+
+### Coordinate system
+
+- `screenshot_window` returns **window-relative** pixels (top-left = 0,0)
+- `click` takes **absolute screen** pixels
+- Use `screenshot_window annotated=true` or `get_ui_elements` to get real screen coords
+- Prefer `click_element` / `click_and_screenshot` over raw coords — they never drift
+
+### Reference app
+
+WPF UI Gallery (`WPF UI Gallery` window title) is installed and is the visual reference for Fluent/WinUI design conventions. Use it to compare widget appearance, spacing, and interaction patterns.

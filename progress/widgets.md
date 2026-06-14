@@ -1,15 +1,18 @@
 # Widgets Progress
 
-## Status: Complete (M12/M13)
+## Status: Complete (M12/M13 + gap-close)
 
 ### Done
-- Label widget (`src/widgets/label.zig`) — text display, preferredSize
-- Button widget (`src/widgets/button.zig`) — hover/press states, Signal(void) clicked, Tween hover animation
-- ButtonStyle struct — themeable bg/bg_hover/bg_press/fg
-- TextField widget (`src/widgets/text_field.zig`) — typed text, cursor, char_input, backspace/delete/home/end/left/right, focus/blur, placeholder hint, Ctrl+A/C/V clipboard
-- Container widget (`src/widgets/container.zig`) — panel with optional title bar, contentRect(), themed borders
-- Checkbox widget (`src/widgets/checkbox.zig`) — checked/unchecked, Tween check animation, Signal(bool) changed
-- Slider widget (`src/widgets/slider.zig`) — 0..1 float value, drag interaction, Signal(f32) changed, styled track+thumb
+- Label, Button (ButtonStyle), TextField, Container, Checkbox, Slider — all previous
+- ProgressBar (`src/widgets/progress_bar.zig`) — Tween-animated fill, track/fill colors, radius
+- TabView (`src/widgets/tab_view.zig`) — tab bar, active underline, Signal(usize) changed, contentRect()
+- ScrollArea (`src/widgets/scroll_area.zig`) — scrollbar track/thumb, drag, wheel, contentRect()
+- TextArea (`src/widgets/text_area.zig`) — multiline editor, line split/merge, UTF-8 cursor, scroll_y
+- ListView (`src/widgets/list_view.zig`) — scrollable item list, hover/selected highlight, Signal(usize) changed
+- DropDown (`src/widgets/dropdown.zig`) — collapsed picker, popup list, Signal(usize) changed, key nav
+- Tooltip (`src/widgets/tooltip.zig`) — hover-delay popup, auto-position, window-edge clamping
+- Dialog (`src/widgets/dialog.zig`) — modal overlay, OK/Cancel signals, Escape closes
+- Menu (`src/widgets/menu.zig`) — MenuItem list, separators, enabled/disabled, Signal(usize) selected, key nav
 
 ### In Progress
 _(nothing)_
@@ -18,6 +21,6 @@ _(nothing)_
 _(nothing)_
 
 ### Up Next
-- ScrollArea
-- Tab/Panel switcher
-- Progress bar widget (currently drawn inline in demo)
+- Image widget (display Image type, optional scaling)
+- RichText / formatted text
+- Accessibility / screen reader integration

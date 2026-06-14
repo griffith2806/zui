@@ -6,7 +6,7 @@ const Signal   = @import("../signals/signal.zig").Signal;
 const std      = @import("std");
 
 pub const SliderStyle = struct {
-    track_h:     u32   = 4,
+    track_h:     u32   = 2,
     thumb_w:     u32   = 16,
     thumb_h:     u32   = 16,
     track_bg:    Color = Color.rgb(60, 60, 65),
