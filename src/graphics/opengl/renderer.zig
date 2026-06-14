@@ -171,6 +171,21 @@ pub const Renderer = struct {
         return @intCast(text.len * atlas.GLYPH_W);
     }
 
+    pub fn drawTextScaled(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
+        const s: i32 = @intCast(scale);
+        const gw: i32 = @intCast(atlas.GLYPH_W);
+        const gh: i32 = @intCast(atlas.GLYPH_H);
+        for (text, 0..) |ch, i| {
+            const gx = x + @as(i32, @intCast(i)) * gw * s;
+            const gr = Rect.init(gx, y, @intCast(gw * s), @intCast(gh * s));
+            self.pushQuad(gr, atlas.glyphUV(ch), color, true);
+        }
+    }
+
+    pub fn textWidthScaled(text: []const u8, scale: u32) u32 {
+        return @intCast(text.len * atlas.GLYPH_W * scale);
+    }
+
     pub fn present(self: *Renderer) void {
         self.flush();
         self.ctx.swapBuffers();

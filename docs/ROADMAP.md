@@ -60,17 +60,18 @@ _Goal: GPU-accelerated rendering._
 ## Milestone 7 — Vulkan Backend
 - [ ] Vulkan renderer backend
 
-## Milestone 8 — Showcase Demo
+## ✅ Milestone 8 — Showcase Demo _(complete)_
 _Goal: a single polished app that exercises every completed subsystem — the zui equivalent of a component gallery._
 
-- [ ] Navigation sidebar (Box layout, Label, active-state highlight)
-- [ ] Counter page (Label, Button with Signal, large text display)
-- [ ] Color picker page (Style/Color, fillRect grid, click-to-select)
-- [ ] Layout inspector page (BoxLayout demo, nested containers)
-- [ ] Input page (TextField widget, key events, live echo)
-- [ ] Theme toggle (light ↔ dark, Theme struct)
-- [ ] About panel (overlay, version string, keyboard shortcut list)
-- [ ] Pixel-perfect WinUI-style dark-mode skin throughout
+- [x] WPF UI–style sidebar navigation (5 pages, active indicator, accent icon)
+- [x] Dashboard page — 3 stat cards (GridLayout 3×1), counter card (Signal demo), feature list, BoxLayout strip
+- [x] Controls page — TextField (search + name), Button variants, Toggle widgets, progress bars, accent swatch row
+- [x] Colors page — accent ramp, system colors, neutral ramp, Color.lerp gradient demo
+- [x] Layout page — BoxLayout vertical + horizontal, GridLayout 2×3, 3×1 stat grid, Container titled panel
+- [x] About page — 5× scaled logo, expandable architecture notes section
+- [x] Dark/light theme toggle wired throughout all pages
+- [x] drawTextScaled() on both software + OpenGL backends for large headings
+- [x] Validated live: all 5 pages navigate correctly, all widgets interactive
 
 ## Backlog
 - Accessibility (a11y) tree
