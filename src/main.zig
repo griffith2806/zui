@@ -116,7 +116,7 @@ const ControlsState = struct {
         self.btn_theme.style = .{ .bg = theme.btn_bg, .bg_hover = theme.btn_hover,  .bg_press = theme.btn_press, .fg = theme.fg };
     }
 
-    pub fn draw(self: *const ControlsState, r: *zui.Renderer, dark_mode: bool, theme: zui.Theme) void {
+    pub fn draw(self: *ControlsState, r: *zui.Renderer, dark_mode: bool, theme: zui.Theme) void {
         const lx = cx(); const base = cy(); const ly = HDR_H + 16;
         const rx: i32 = lx + 420;
 
@@ -125,11 +125,11 @@ const ControlsState = struct {
 
         // Text inputs
         sectionLabel(r, lx, base, "Text Input");
-        r.drawText("Search:", lx, base + 42, FG_SEC);
+        r.drawText("Search:", lx, base + 22, FG_SEC);
         self.field_search.draw(r, zui.Rect.init(lx, base + 40, 300, 34), theme);
         if (self.field_search.text.items.len > 0)
             r.drawText(self.field_search.text.items, lx + 310, base + 51, ACCENT);
-        r.drawText("Name:", lx, base + 102, FG_SEC);
+        r.drawText("Name:", lx, base + 82, FG_SEC);
         self.field_name.draw(r, zui.Rect.init(lx, base + 100, 280, 34), theme);
         if (self.field_name.text.items.len > 0) {
             var buf: [80]u8 = undefined;
@@ -249,7 +249,8 @@ const InputsState = struct {
         self.dropdown.draw(r, zui.Rect.init(rx, base + 278, 260, 36));
         var dd_buf: [48]u8 = undefined;
         const dd_str = std.fmt.bufPrint(&dd_buf, "Picked: {s}", .{LANG_ITEMS[self.dropdown.selected]}) catch "";
-        r.drawText(dd_str, rx, base + 324, FG_SEC);
+        if (!self.dropdown.open)
+            r.drawText(dd_str, rx, base + 324, FG_SEC);
     }
 };
 
@@ -421,6 +422,7 @@ pub fn main(init: std.process.Init) !void {
                             page = item.page;
                     }
                 },
+                .resize => |sz| { W = sz.width; H = sz.height; },
                 else => {},
             }
             switch (page) {
@@ -442,8 +444,6 @@ pub fn main(init: std.process.Init) !void {
 
         // ── Update ──────────────────────────────────────────────────────────
         app.syncSize();
-        W = app.window.width;
-        H = app.window.height;
 
         const theme = if (dark_mode) zui.Theme.dark else zui.Theme.light;
         controls.update(dt_s, theme);

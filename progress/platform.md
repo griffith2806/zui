@@ -1,26 +1,20 @@
 # Platform Progress
 
-## Status: Complete (Win32, M13)
+## Status: Win32 Complete; X11 Stub (M13 + gap-close)
 
 ### Done
-- Win32 platform backend (`src/platform/win32/window.zig`)
-  - Window creation (RegisterClassExW, CreateWindowExW)
-  - DIB section for software rendering pixel buffer
-  - Message loop (PeekMessage, DispatchMessage)
-  - WndProc translating Win32 messages → zui Events
-  - Mouse press/release/move/wheel, keyboard (full VK mapping), resize, close
-  - present() via BitBlt
-  - **M9**: resizeDIB correct GDI deletion order (select new bitmap before deleting old)
-  - **M13**: WM_KEYDOWN/WM_KEYUP with modifier tracking (Shift/Ctrl/Alt via GetKeyState i16→u16 bitcast)
-  - **M13**: Clipboard support (`src/platform/win32/clipboard.zig`) — CF_UNICODETEXT, GlobalAlloc/Lock/Unlock
+- Win32 platform backend (`src/platform/win32/window.zig`) — fully working
+  - Window creation, message loop, WndProc → zui Events
+  - Mouse/keyboard/resize/close, clipboard, modifier tracking
+- X11 stub (`src/platform/x11/window.zig`) — interface mirrors Win32; methods panic at runtime
+  - File structure exists; `app.zig` comptime-dispatches to it on Linux
 
 ### In Progress
 _(nothing)_
 
 ### Blocked
-_(nothing)_
+- X11 real implementation needs a Linux build environment
 
 ### Up Next
-- Platform interface / vtable or comptime trait design
-- x11 backend (Linux)
-- Cocoa backend (macOS) — stub
+- X11 real implementation (XOpenDisplay, XCreateWindow, XPutImage, XNextEvent)
+- Cocoa backend (macOS) — not started

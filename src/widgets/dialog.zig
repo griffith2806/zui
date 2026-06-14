@@ -65,6 +65,8 @@ pub const Dialog = struct {
     pub fn draw(self: *const Dialog, r: *Renderer, window_rect: Rect) void {
         if (!self.visible) return;
 
+        // Discard page text queued before the overlay so it doesn't bleed through.
+        r.clearTextQueue();
         r.fillRect(window_rect, self.overlay);
 
         const dr = self.dialogRect(window_rect);

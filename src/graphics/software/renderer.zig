@@ -52,34 +52,73 @@ pub const NUM_FONT_SCALES = FONT_PX.len;
 // Approximate line-height for layout purposes (scale=1 body text).
 pub const LINE_H: u32 = 18;
 
+// ── Text command queue ────────────────────────────────────────────────────────
+// Text is NOT drawn to the DIB.  Instead each call to drawTextScale() queues
+// a command here.  After BitBlt the caller passes the real screen DC to
+// flushText(), which renders with ClearType on the actual display surface.
+
+const MAX_TEXT_CMDS = 256;
+const TEXT_WBUF_CAP = 8192; // UTF-16 code units across all commands in one frame
+
+const TextCmd = struct {
+    wbuf_start: u32,
+    wbuf_len:   u32,
+    x:     i32,
+    y:     i32,
+    color: Color,
+    scale: u32,
+};
+
 // ── Pixel format: Win32 DIB BGRA (0x00RRGGBB little-endian) ──────────────────
 
 pub const Renderer = struct {
-    pixels: [*]u32,
-    width:  u32,
-    height: u32,
-    // GDI text state — null until initGdi() is called
+    pixels:    [*]u32,
+    width:     u32,    // physical pixel width of the backing buffer
+    height:    u32,    // physical pixel height
+    dpi_scale: f32 = 1.0,
+    // GDI state — null until initGdi() is called.  The memory DC is kept only
+    // for font measurement (GetTextExtentPoint32W); text is drawn on the screen DC.
     gdi_dc:    ?HDC  = null,
     gdi_fonts: [NUM_FONT_SCALES]?HFONT = .{null} ** NUM_FONT_SCALES,
+    // Deferred text queue
+    text_cmds:      [MAX_TEXT_CMDS]TextCmd = undefined,
+    text_cmd_count: usize = 0,
+    text_wbuf:      [TEXT_WBUF_CAP]u16 = undefined,
+    text_wbuf_pos:  usize = 0,
 
     pub fn init(pixels: [*]u32, width: u32, height: u32) Renderer {
         return .{ .pixels = pixels, .width = width, .height = height };
     }
 
-    /// Call once after init, passing the memory DC from the Win32 window.
-    pub fn initGdi(self: *Renderer, dc: *anyopaque) void {
+    /// Call once after init, passing the memory DC and DPI scale factor.
+    /// Fonts are created at physical pixel sizes so ClearType renders at native res.
+    pub fn initGdi(self: *Renderer, dc: *anyopaque, dpi_scale: f32) void {
+        self.dpi_scale = dpi_scale;
         self.gdi_dc = @ptrCast(dc);
         _ = SetBkMode(self.gdi_dc.?, TRANSPARENT_BK);
         _ = SetTextAlign(self.gdi_dc.?, TA_LEFT | TA_TOP);
         for (FONT_PX, 0..) |px, i| {
             if (px == 0) continue;
+            // Scale font height to physical pixels for crisp ClearType rendering
+            const phys_px: INT = @intFromFloat(@round(@as(f32, @floatFromInt(px)) * dpi_scale));
             const weight: INT = if (px >= 32) FW_SEMIBOLD else FW_NORMAL;
             self.gdi_fonts[i] = CreateFontW(
-                -px, 0, 0, 0, weight, 0, 0, 0,
+                -phys_px, 0, 0, 0, weight, 0, 0, 0,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY, FF_SWISS, SEGOE_UI,
             );
         }
+    }
+
+    // ── DPI helpers ───────────────────────────────────────────────────────────
+
+    inline fn toPhysI(self: *const Renderer, v: i32) i32 {
+        if (self.dpi_scale == 1.0) return v;
+        return @intFromFloat(@round(@as(f32, @floatFromInt(v)) * self.dpi_scale));
+    }
+    inline fn toPhysU(self: *const Renderer, v: u32) u32 {
+        if (self.dpi_scale == 1.0) return v;
+        return @intFromFloat(@round(@as(f32, @floatFromInt(v)) * self.dpi_scale));
     }
 
     pub fn deinit(self: *Renderer) void {
@@ -94,15 +133,35 @@ pub const Renderer = struct {
     }
 
     pub fn fillRect(self: *Renderer, rect: Rect, color: Color) void {
-        const v  = toPixel(color);
-        const x0: u32 = @intCast(@max(0, rect.x));
-        const y0: u32 = @intCast(@max(0, rect.y));
-        const x1: u32 = @intCast(@min(@as(i32, @intCast(self.width)),  rect.right()));
-        const y1: u32 = @intCast(@min(@as(i32, @intCast(self.height)), rect.bottom()));
+        // Convert logical → physical before drawing into the physical pixel buffer
+        const x0: u32 = @intCast(@max(0, self.toPhysI(rect.x)));
+        const y0: u32 = @intCast(@max(0, self.toPhysI(rect.y)));
+        const x1: u32 = @intCast(@min(@as(i32, @intCast(self.width)),  self.toPhysI(rect.right())));
+        const y1: u32 = @intCast(@min(@as(i32, @intCast(self.height)), self.toPhysI(rect.bottom())));
         if (x0 >= x1 or y0 >= y1) return;
-        var y: u32 = y0;
-        while (y < y1) : (y += 1) {
-            @memset(self.pixels[y * self.width + x0 .. y * self.width + x1], v);
+        if (color.a == 255) {
+            const v = toPixel(color);
+            var y: u32 = y0;
+            while (y < y1) : (y += 1) {
+                @memset(self.pixels[y * self.width + x0 .. y * self.width + x1], v);
+            }
+        } else if (color.a > 0) {
+            // Alpha-blend path — used for modal scrims and semi-transparent fills.
+            const af: u32  = color.a;
+            const oma: u32 = 255 - af;
+            const pr: u32  = @as(u32, color.r) * af;
+            const pg: u32  = @as(u32, color.g) * af;
+            const pb: u32  = @as(u32, color.b) * af;
+            var y: u32 = y0;
+            while (y < y1) : (y += 1) {
+                for (self.pixels[y * self.width + x0 .. y * self.width + x1]) |*px| {
+                    const bg = px.*;
+                    const r = (pr + ((bg >> 16) & 0xFF) * oma) / 255;
+                    const g = (pg + ((bg >>  8) & 0xFF) * oma) / 255;
+                    const b = (pb + ( bg         & 0xFF) * oma) / 255;
+                    px.* = (r << 16) | (g << 8) | b;
+                }
+            }
         }
     }
 
@@ -119,19 +178,24 @@ pub const Renderer = struct {
     }
 
     fn drawTextScale(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
-        const idx = @min(scale, NUM_FONT_SCALES - 1);
-        if (self.gdi_dc) |dc| {
-            if (self.gdi_fonts[idx]) |hf| {
-                _ = SelectObject(dc, @ptrCast(hf));
-                const cr: DWORD = @as(DWORD, color.r) | (@as(DWORD, color.g) << 8) | (@as(DWORD, color.b) << 16);
-                _ = SetTextColor(dc, cr);
-                var wbuf: [1024]u16 = undefined;
-                const wlen = std.unicode.utf8ToUtf16Le(&wbuf, text) catch return;
-                _ = TextOutW(dc, @intCast(x), @intCast(y), wbuf[0..wlen].ptr, @intCast(wlen));
-                return;
-            }
+        if (self.gdi_dc != null) {
+            if (self.text_cmd_count >= MAX_TEXT_CMDS) return;
+            var wbuf: [1024]u16 = undefined;
+            const wlen = std.unicode.utf8ToUtf16Le(&wbuf, text) catch return;
+            if (self.text_wbuf_pos + wlen > TEXT_WBUF_CAP) return;
+            @memcpy(self.text_wbuf[self.text_wbuf_pos..][0..wlen], wbuf[0..wlen]);
+            self.text_cmds[self.text_cmd_count] = .{
+                .wbuf_start = @intCast(self.text_wbuf_pos),
+                .wbuf_len   = @intCast(wlen),
+                // Store physical coords so GDI places text at the correct pixel
+                .x = self.toPhysI(x), .y = self.toPhysI(y),
+                .color = color, .scale = scale,
+            };
+            self.text_cmd_count += 1;
+            self.text_wbuf_pos  += wlen;
+            return;
         }
-        // Fallback: bitmap font
+        // Fallback: bitmap font (no GDI / non-Windows)
         if (scale <= 1) {
             self.drawBitmapText(text, x, y, color);
         } else {
@@ -139,7 +203,35 @@ pub const Renderer = struct {
         }
     }
 
+    /// Discard all queued text for this frame without rendering.
+    /// Use before drawing a modal overlay so page text doesn't bleed through.
+    pub fn clearTextQueue(self: *Renderer) void {
+        self.text_cmd_count = 0;
+        self.text_wbuf_pos  = 0;
+    }
+
+    /// Render all queued text commands to the screen DC with ClearType AA.
+    /// Called by the window/app layer after BitBlt, before ReleaseDC.
+    pub fn flushText(self: *Renderer, screen_dc_raw: *anyopaque) void {
+        if (self.text_cmd_count == 0) return;
+        const dc: HDC = @ptrCast(screen_dc_raw);
+        _ = SetBkMode(dc, TRANSPARENT_BK);
+        _ = SetTextAlign(dc, TA_LEFT | TA_TOP);
+        for (self.text_cmds[0..self.text_cmd_count]) |cmd| {
+            const idx = @min(cmd.scale, NUM_FONT_SCALES - 1);
+            if (self.gdi_fonts[idx]) |hf| {
+                _ = SelectObject(dc, @ptrCast(hf));
+                const cr: DWORD = @as(DWORD, cmd.color.r) | (@as(DWORD, cmd.color.g) << 8) | (@as(DWORD, cmd.color.b) << 16);
+                _ = SetTextColor(dc, cr);
+                _ = TextOutW(dc, cmd.x, cmd.y, self.text_wbuf[cmd.wbuf_start..].ptr, @intCast(cmd.wbuf_len));
+            }
+        }
+        self.text_cmd_count = 0;
+        self.text_wbuf_pos  = 0;
+    }
+
     /// Measure text width in pixels using GDI or bitmap fallback.
+    /// Returns the text width in LOGICAL (device-independent) pixels.
     pub fn textWidth(self: *const Renderer, text: []const u8) u32 {
         return self.textWidthScaled(text, 1);
     }
@@ -153,7 +245,11 @@ pub const Renderer = struct {
                 const wlen = std.unicode.utf8ToUtf16Le(&wbuf, text) catch return 0;
                 var sz: GdiSize = undefined;
                 _ = GetTextExtentPoint32W(@constCast(dc), wbuf[0..wlen].ptr, @intCast(wlen), &sz);
-                return @intCast(@max(0, sz.cx));
+                // Font was created at physical size → GDI returns physical width.
+                // Divide back to logical so widgets can use it for layout.
+                const phys: u32 = @intCast(@max(0, sz.cx));
+                if (self.dpi_scale <= 1.0) return phys;
+                return @intFromFloat(@ceil(@as(f32, @floatFromInt(phys)) / self.dpi_scale));
             }
         }
         return @intCast(text.len * bfont.GLYPH_W * scale);
@@ -183,6 +279,15 @@ pub const Renderer = struct {
     // ── Rounded rect ──────────────────────────────────────────────────────────
 
     pub fn fillRoundRect(self: *Renderer, rect: Rect, radius: u32, color: Color) void {
+        // Scale logical → physical before rasterizing
+        const phys = Rect.init(
+            self.toPhysI(rect.x), self.toPhysI(rect.y),
+            self.toPhysU(rect.width), self.toPhysU(rect.height),
+        );
+        self.fillRoundRectPhys(phys, self.toPhysU(radius), color);
+    }
+
+    fn fillRoundRectPhys(self: *Renderer, rect: Rect, radius: u32, color: Color) void {
         const r: i32 = @intCast(@min(radius, @min(rect.width, rect.height) / 2));
         const bx0: i32 = @max(0, rect.x);
         const by0: i32 = @max(0, rect.y);
@@ -240,6 +345,44 @@ pub const Renderer = struct {
                     const dx = px - cx_ctr;
                     if (dx * dx + dy * dy > r * r) continue;
                     self.blendPixel(@intCast(px), @intCast(py), color);
+                }
+            }
+        }
+    }
+
+    // ── Image blit ────────────────────────────────────────────────────────────
+
+    /// Blit a raw pixel buffer to the frame. `pixels` contains `src_w * src_h`
+    /// values in 0xAARRGGBB format (alpha in high byte). Clips to frame bounds.
+    pub fn drawImageRaw(self: *Renderer, pixels: [*]const u32, src_w: u32, src_h: u32, dst: Rect) void {
+        const dx0: i32 = @max(0, dst.x);
+        const dy0: i32 = @max(0, dst.y);
+        const dx1: i32 = @min(@as(i32, @intCast(self.width)),  dst.right());
+        const dy1: i32 = @min(@as(i32, @intCast(self.height)), dst.bottom());
+        if (dx0 >= dx1 or dy0 >= dy1) return;
+        const ox: u32 = @intCast(dx0 - dst.x);
+        const oy: u32 = @intCast(dy0 - dst.y);
+        var sy: u32 = oy;
+        var dy: u32 = @intCast(dy0);
+        while (dy < @as(u32, @intCast(dy1))) : ({ dy += 1; sy += 1; }) {
+            if (sy >= src_h) break;
+            var sx: u32 = ox;
+            var dx: u32 = @intCast(dx0);
+            while (dx < @as(u32, @intCast(dx1))) : ({ dx += 1; sx += 1; }) {
+                if (sx >= src_w) break;
+                const px = pixels[sy * src_w + sx];
+                const a: u8 = @truncate(px >> 24);
+                if (a == 0) continue;
+                if (a == 255) {
+                    self.pixels[dy * self.width + dx] = px & 0x00FFFFFF;
+                } else {
+                    const bg  = self.pixels[dy * self.width + dx];
+                    const af: u32 = a;
+                    const oma: u32 = 255 - af;
+                    const rr = (((px >> 16) & 0xFF) * af + ((bg >> 16) & 0xFF) * oma) / 255;
+                    const gg = (((px >>  8) & 0xFF) * af + ((bg >>  8) & 0xFF) * oma) / 255;
+                    const bb = ( (px        & 0xFF) * af + ( bg        & 0xFF) * oma) / 255;
+                    self.pixels[dy * self.width + dx] = (rr << 16) | (gg << 8) | bb;
                 }
             }
         }

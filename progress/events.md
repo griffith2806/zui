@@ -1,10 +1,11 @@
 # Events Progress
 
-## Status: In Progress
+## Status: Complete (base types) — propagation model pending
 
 ### Done
 - Event union type (`src/events/event.zig`) — MouseEvent, KeyEvent, ResizeEvent, ScrollEvent, all variants
-- Unit tests passing (`zig build test`)
+- Modifiers struct (shift/ctrl/alt/super)
+- Unit tests passing
 
 ### In Progress
 _(nothing)_
@@ -13,5 +14,5 @@ _(nothing)_
 _(nothing)_
 
 ### Up Next
-- Event queue (ring buffer, no heap allocation) — done in Win32 backend, needs standalone module
-- Propagation model (bubble vs capture) — needed when widget tree exists
+- Event propagation model (bubble/capture) — requires widget tree abstraction
+- Standalone event queue module (ring buffer, no heap allocation)

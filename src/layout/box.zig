@@ -28,6 +28,78 @@ pub const BoxLayout = struct {
         }
     }
 
+    pub fn computeWithFlex(
+        self: BoxLayout,
+        bounds: Rect,
+        sizes: []const Size,
+        flex: []const u32,
+        out: []Rect,
+    ) void {
+        std.debug.assert(out.len == sizes.len);
+        std.debug.assert(flex.len == sizes.len);
+
+        var total_flex: u32 = 0;
+        for (flex) |f| total_flex += f;
+
+        const inner_w: u32 = if (bounds.width > self.padding.left + self.padding.right)
+            bounds.width - self.padding.left - self.padding.right
+        else
+            0;
+        const inner_h: u32 = if (bounds.height > self.padding.top + self.padding.bottom)
+            bounds.height - self.padding.top - self.padding.bottom
+        else
+            0;
+
+        const total_spacing: u32 = if (sizes.len > 1) self.spacing * @as(u32, @intCast(sizes.len - 1)) else 0;
+
+        var fixed_main: u32 = 0;
+        for (sizes, 0..) |s, i| {
+            if (flex[i] == 0) {
+                fixed_main += switch (self.direction) {
+                    .vertical   => s.height,
+                    .horizontal => s.width,
+                };
+            }
+        }
+
+        const available_main: u32 = switch (self.direction) {
+            .vertical   => inner_h,
+            .horizontal => inner_w,
+        };
+
+        const remaining: u32 = if (available_main > fixed_main + total_spacing)
+            available_main - fixed_main - total_spacing
+        else
+            0;
+
+        var cursor_x: i32 = bounds.x + @as(i32, @intCast(self.padding.left));
+        var cursor_y: i32 = bounds.y + @as(i32, @intCast(self.padding.top));
+
+        for (sizes, 0..) |s, i| {
+            const item_w: u32 = switch (self.direction) {
+                .vertical   => inner_w,
+                .horizontal => if (flex[i] > 0 and total_flex > 0)
+                    (remaining * flex[i]) / total_flex
+                else
+                    s.width,
+            };
+            const item_h: u32 = switch (self.direction) {
+                .vertical   => if (flex[i] > 0 and total_flex > 0)
+                    (remaining * flex[i]) / total_flex
+                else
+                    s.height,
+                .horizontal => inner_h,
+            };
+
+            out[i] = Rect.init(cursor_x, cursor_y, item_w, item_h);
+
+            switch (self.direction) {
+                .vertical   => cursor_y += @as(i32, @intCast(item_h + self.spacing)),
+                .horizontal => cursor_x += @as(i32, @intCast(item_w + self.spacing)),
+            }
+        }
+    }
+
     /// Total space this layout needs to hold all `sizes` with spacing and padding.
     pub fn measure(self: BoxLayout, sizes: []const Size) Size {
         var total_w: u32 = self.padding.left + self.padding.right;
@@ -56,6 +128,20 @@ test "BoxLayout vertical" {
     layout.compute(Rect.init(10, 10, 200, 200), &sizes, &rects);
     try std.testing.expectEqual(@as(i32, 10), rects[0].y);
     try std.testing.expectEqual(@as(i32, 34), rects[1].y); // 10 + 20 + 4
+}
+
+test "BoxLayout computeWithFlex vertical" {
+    const layout = BoxLayout{ .direction = .vertical, .spacing = 0, .padding = Margin.all(0) };
+    const sizes = [_]Size{
+        .{ .width = 100, .height = 20 },
+        .{ .width = 100, .height = 0 },
+    };
+    const flex = [_]u32{ 0, 1 };
+    var rects: [2]Rect = undefined;
+    layout.computeWithFlex(Rect.init(0, 0, 100, 120), &sizes, &flex, &rects);
+    try std.testing.expectEqual(@as(u32, 20), rects[0].height);
+    try std.testing.expectEqual(@as(i32, 20), rects[1].y);
+    try std.testing.expectEqual(@as(u32, 100), rects[1].height);
 }
 
 test "BoxLayout horizontal" {

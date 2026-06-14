@@ -1,13 +1,14 @@
 # Style Progress
 
-## Status: Complete (M3)
+## Status: Complete (M3 + gap-close)
 
 ### Done
 - Color type (`src/style/color.zig`) — rgb/rgba, lerp, premultiplied, fromU32/toU32
 - Theme struct (`src/style/theme.zig`) — Theme.dark and Theme.light presets
-  - bg, bg_panel, bg_header, accent, fg, fg_muted, divider
-  - btn_bg/hover/press, input_bg/border/border_focused
-- Theme toggle validated live in M3 dashboard (dark ↔ light via button click)
+- Font descriptor (`src/style/font.zig`) — Font{family, size_pt, weight, style}
+  - Weight enum: thin/light/regular/medium/semibold/bold/extrabold/black
+  - Style enum: normal/italic
+  - Presets: Font.default(), Font.heading(), Font.caption(), Font.mono()
 
 ### In Progress
 _(nothing)_
@@ -16,5 +17,5 @@ _(nothing)_
 _(nothing)_
 
 ### Up Next
-- Font descriptor (family/size/weight)
-- CSS-like style inheritance
+- Font descriptor wired into renderer (renderer still hardcodes Segoe UI Variable)
+- CSS-like style inheritance / cascade

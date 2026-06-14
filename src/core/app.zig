@@ -8,7 +8,8 @@ extern "kernel32" fn Sleep(dwMs: u32) callconv(std.builtin.CallingConvention.win
 
 const Window = switch (builtin.os.tag) {
     .windows => @import("../platform/win32/window.zig").Window,
-    else     => @compileError("no platform backend for this OS yet"),
+    .linux   => @import("../platform/x11/window.zig").Window,
+    else     => @compileError("unsupported platform"),
 };
 
 const RendererMod = switch (build_options.backend) {
@@ -38,9 +39,9 @@ pub const Application = struct {
             .opengl   => try Renderer.init(win.hwnd, win.width, win.height),
         };
 
-        // Wire the Win32 memory DC into the software renderer for GDI text.
-        if (build_options.backend == .software) {
-            renderer.initGdi(@ptrCast(win.dc_mem));
+        // GDI text is Win32-only; on other platforms the bitmap font fallback is used.
+        if (comptime (builtin.os.tag == .windows and build_options.backend == .software)) {
+            renderer.initGdi(@ptrCast(win.dc_mem), win.dpi_scale);
         }
 
         return .{ .alloc = alloc, .window = win, .renderer = renderer };
@@ -79,8 +80,18 @@ pub const Application = struct {
 
     pub fn present(self: *Application) void {
         switch (build_options.backend) {
-            .software => self.window.present(),
-            .opengl   => self.renderer.present(),
+            .software => {
+                if (comptime builtin.os.tag == .windows) {
+                    // BitBlt DIB → screen DC, flush queued GDI text with ClearType.
+                    if (self.window.present()) |screen_dc| {
+                        self.renderer.flushText(screen_dc);
+                        self.window.releasePresent(screen_dc);
+                    }
+                } else {
+                    _ = self.window.present();
+                }
+            },
+            .opengl => self.renderer.present(),
         }
     }
 

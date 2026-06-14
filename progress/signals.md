@@ -1,13 +1,15 @@
 # Signals Progress
 
-## Status: Complete
+## Status: Complete (+ slot safety)
 
 ### Done
 - Signal(T) generic type (`src/signals/signal.zig`) — comptime payload type
-- connect(alloc, ctx, comptime func) — type-erased slot using comptime wrapper
+- connect(alloc, ctx, comptime func) → Connection — returns generation-stamped handle
+- Connection{ gen: u32, ctx: *anyopaque } — safe disconnect via disconnectHandle()
+- disconnectHandle(handle) — no-op if handle is stale (generation mismatch); safe to call twice
+- disconnect(ctx) — removes all slots matching ctx pointer regardless of generation
 - emit(value) — synchronous dispatch to all connected slots
-- disconnect_all / deinit — cleanup via ArrayListUnmanaged
-- Validated live: btn.clicked Signal(void) connected to counter increment, reset, about toggle
+- deinit — cleanup via ArrayListUnmanaged
 
 ### In Progress
 _(nothing)_
@@ -16,5 +18,5 @@ _(nothing)_
 _(nothing)_
 
 ### Up Next
-- Weak-ref safety for slot lifetime (Milestone 3+)
+- Queued/deferred emit (post to next-frame queue)
 - Comptime connection verification enhancements

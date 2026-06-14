@@ -164,7 +164,12 @@ extern "user32" fn AdjustWindowRect(lpRect: *RECT, dwStyle: DWORD, bMenu: BOOL) 
 extern "user32" fn LoadCursorW(hInstance: ?HINSTANCE, lpCursorName: [*:0]const u16) callconv(std.builtin.CallingConvention.winapi) ?HCURSOR;
 const IDC_ARROW: [*:0]const u16 = @ptrFromInt(32512);
 
+extern "user32" fn SetProcessDpiAwarenessContext(value: isize) callconv(std.builtin.CallingConvention.winapi) BOOL;
+extern "user32" fn GetDpiForSystem() callconv(std.builtin.CallingConvention.winapi) UINT;
+const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
+
 extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(std.builtin.CallingConvention.winapi) ?HDC;
+extern "gdi32" fn CreateCompatibleBitmap(hdc: HDC, cx: INT, cy: INT) callconv(std.builtin.CallingConvention.winapi) ?HBITMAP;
 extern "gdi32" fn DeleteDC(hdc: HDC) callconv(std.builtin.CallingConvention.winapi) BOOL;
 extern "gdi32" fn CreateDIBSection(
     hdc: ?HDC, lpbmi: *const BITMAPINFO, usage: UINT,
@@ -185,12 +190,17 @@ const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("zui_wnd");
 const MAX_EVENTS = 128;
 
 pub const Window = struct {
-    hwnd:   HWND,
-    dc_mem: HDC,
-    bitmap: HBITMAP,
-    pixels: [*]u32,
-    width:  u32,
-    height: u32,
+    hwnd:    HWND,
+    dc_mem:  HDC,
+    bitmap:  HBITMAP,
+    pixels:  [*]u32,
+    // Composite off-screen DC: DIB is blitted here first, then text is rendered
+    // on top with ClearType (screen-compatible DC), then one atomic blit to screen.
+    dc_comp: HDC,
+    bm_comp: HBITMAP,
+    width:  u32,      // physical pixel width of the DIB / pixel buffer
+    height: u32,      // physical pixel height
+    dpi_scale: f32,   // e.g. 2.0 on a 200% DPI display
     should_close: bool = false,
     size_changed: bool = false,
 
@@ -199,6 +209,15 @@ pub const Window = struct {
     ev_tail: u32 = 0,
 
     pub fn create(alloc: std.mem.Allocator, title: []const u8, width: u32, height: u32) !*Window {
+        // Enable per-monitor DPI awareness so we render at native physical resolution.
+        // Must be called before any window is created.
+        _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+        const sys_dpi  = GetDpiForSystem();
+        const dpi_scale: f32 = @as(f32, @floatFromInt(sys_dpi)) / 96.0;
+        const phys_w: u32 = @intFromFloat(@round(@as(f32, @floatFromInt(width))  * dpi_scale));
+        const phys_h: u32 = @intFromFloat(@round(@as(f32, @floatFromInt(height)) * dpi_scale));
+
         const hinstance = GetModuleHandleW(null) orelse return error.NoModuleHandle;
 
         const wc = WNDCLASSEXW{
@@ -221,8 +240,8 @@ pub const Window = struct {
         const title_len = try std.unicode.utf8ToUtf16Le(title_buf[0 .. title_buf.len - 1], title);
         title_buf[title_len] = 0;
 
-        // Adjust so the CLIENT area is exactly width×height, not the total window.
-        var wr = RECT{ .left = 0, .top = 0, .right = @intCast(width), .bottom = @intCast(height) };
+        // Create window sized to the PHYSICAL client area so the DIB maps 1:1 to screen.
+        var wr = RECT{ .left = 0, .top = 0, .right = @intCast(phys_w), .bottom = @intCast(phys_h) };
         _ = AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
 
         const hwnd = CreateWindowExW(
@@ -234,14 +253,18 @@ pub const Window = struct {
         ) orelse return error.CreateWindowFailed;
 
         const dc_src = GetDC(hwnd) orelse return error.GetDCFailed;
-        const dc_mem = CreateCompatibleDC(dc_src) orelse return error.CreateDCFailed;
+        const dc_mem  = CreateCompatibleDC(dc_src) orelse return error.CreateDCFailed;
+        const dc_comp = CreateCompatibleDC(dc_src) orelse return error.CreateDCFailed;
+        const bm_comp = CreateCompatibleBitmap(dc_src, @intCast(phys_w), @intCast(phys_h))
+            orelse return error.CreateDIBFailed;
+        _ = SelectObject(dc_comp, bm_comp);
         _ = ReleaseDC(hwnd, dc_src);
 
         const bmi = BITMAPINFO{
             .bmiHeader = .{
                 .biSize          = @sizeOf(BITMAPINFOHEADER),
-                .biWidth         = @intCast(width),
-                .biHeight        = -@as(LONG, @intCast(height)), // top-down
+                .biWidth         = @intCast(phys_w),
+                .biHeight        = -@as(LONG, @intCast(phys_h)), // top-down
                 .biPlanes        = 1,
                 .biBitCount      = 32,
                 .biCompression   = BI_RGB,
@@ -261,12 +284,15 @@ pub const Window = struct {
 
         const win = try alloc.create(Window);
         win.* = .{
-            .hwnd   = hwnd,
-            .dc_mem = dc_mem,
-            .bitmap = bitmap,
-            .pixels = @ptrCast(@alignCast(raw_bits.?)),
-            .width  = width,
-            .height = height,
+            .hwnd      = hwnd,
+            .dc_mem    = dc_mem,
+            .bitmap    = bitmap,
+            .pixels    = @ptrCast(@alignCast(raw_bits.?)),
+            .dc_comp   = dc_comp,
+            .bm_comp   = bm_comp,
+            .width     = phys_w,
+            .height    = phys_h,
+            .dpi_scale = dpi_scale,
         };
         _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, @bitCast(@intFromPtr(win)));
         _ = ShowWindow(hwnd, SW_SHOW);
@@ -305,12 +331,22 @@ pub const Window = struct {
         };
         var raw_bits: ?*anyopaque = null;
         const new_bmp = CreateDIBSection(self.dc_mem, &bmi, DIB_RGB_COLORS, &raw_bits, null, 0) orelse return;
-        // Select new bitmap first (deselects old one) then delete old.
-        // GDI requires an object to be deselected before deletion.
         _ = SelectObject(self.dc_mem, new_bmp);
         _ = DeleteObject(self.bitmap);
         self.bitmap = new_bmp;
         self.pixels = @ptrCast(@alignCast(raw_bits.?));
+
+        // Resize composite bitmap to match
+        const dc_screen = GetDC(self.hwnd) orelse return;
+        const new_bm_comp = CreateCompatibleBitmap(dc_screen, @intCast(new_w), @intCast(new_h)) orelse {
+            _ = ReleaseDC(self.hwnd, dc_screen);
+            return;
+        };
+        _ = ReleaseDC(self.hwnd, dc_screen);
+        _ = SelectObject(self.dc_comp, new_bm_comp);
+        _ = DeleteObject(self.bm_comp);
+        self.bm_comp = new_bm_comp;
+
         self.width  = new_w;
         self.height = new_h;
         self.size_changed = true;
@@ -319,6 +355,8 @@ pub const Window = struct {
     pub fn deinit(self: *Window, alloc: std.mem.Allocator) void {
         _ = DeleteObject(self.bitmap);
         _ = DeleteDC(self.dc_mem);
+        _ = DeleteObject(self.bm_comp);
+        _ = DeleteDC(self.dc_comp);
         _ = DestroyWindow(self.hwnd);
         alloc.destroy(self);
     }
@@ -334,9 +372,18 @@ pub const Window = struct {
         return null;
     }
 
-    pub fn present(self: *Window) void {
+    /// Copy DIB → composite DC and return the composite DC for text rendering.
+    /// Text is drawn on the composite (screen-compatible) DC to get ClearType AA.
+    /// After text is drawn, call releasePresent() to blit everything to screen.
+    pub fn present(self: *Window) ?*anyopaque {
+        _ = BitBlt(self.dc_comp, 0, 0, @intCast(self.width), @intCast(self.height), self.dc_mem, 0, 0, SRCCOPY);
+        return @ptrCast(self.dc_comp);
+    }
+
+    /// Blit the completed composite frame (shapes + text) to the screen in one shot.
+    pub fn releasePresent(self: *Window, _: *anyopaque) void {
         const dc = GetDC(self.hwnd) orelse return;
-        _ = BitBlt(dc, 0, 0, @intCast(self.width), @intCast(self.height), self.dc_mem, 0, 0, SRCCOPY);
+        _ = BitBlt(dc, 0, 0, @intCast(self.width), @intCast(self.height), self.dc_comp, 0, 0, SRCCOPY);
         _ = ReleaseDC(self.hwnd, dc);
     }
 
@@ -370,19 +417,22 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
         WM_SIZE => {
             if (win) |w| {
                 const ulp: usize = @bitCast(lp);
-                const nw: u32 = @truncate(ulp & 0xFFFF);
+                const nw: u32 = @truncate(ulp & 0xFFFF);  // physical
                 const nh: u32 = @truncate((ulp >> 16) & 0xFFFF);
                 if (nw > 0 and nh > 0 and (nw != w.width or nh != w.height)) {
                     w.resizeDIB(nw, nh);
                 }
-                w.pushEvent(.{ .resize = .{ .width = @truncate(nw), .height = @truncate(nh) } });
+                // Emit logical (device-independent) dimensions
+                const lw: u32 = @intFromFloat(@round(@as(f32, @floatFromInt(nw)) / w.dpi_scale));
+                const lh: u32 = @intFromFloat(@round(@as(f32, @floatFromInt(nh)) / w.dpi_scale));
+                w.pushEvent(.{ .resize = .{ .width = lw, .height = lh } });
             }
         },
         WM_PAINT => {
             if (win) |w| {
                 var ps: PAINTSTRUCT = undefined;
                 const dc = BeginPaint(hwnd, &ps) orelse return 0;
-                _ = BitBlt(dc, 0, 0, @intCast(w.width), @intCast(w.height), w.dc_mem, 0, 0, SRCCOPY);
+                _ = BitBlt(dc, 0, 0, @intCast(w.width), @intCast(w.height), w.dc_comp, 0, 0, SRCCOPY);
                 _ = EndPaint(hwnd, &ps);
             }
             return 0;
@@ -391,7 +441,10 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
             if (win) |w| {
                 const x: i32 = @as(i16, @truncate(lp));
                 const y: i32 = @as(i16, @truncate(lp >> 16));
-                w.pushEvent(.{ .mouse_move = .{ .x = x, .y = y, .dx = 0, .dy = 0 } });
+                w.pushEvent(.{ .mouse_move = .{
+                    .x = physToLog(x, w.dpi_scale), .y = physToLog(y, w.dpi_scale),
+                    .dx = 0, .dy = 0,
+                } });
             }
         },
         WM_LBUTTONDOWN => mouseBtn(win, lp, .left, true),
@@ -424,14 +477,21 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
 
 fn mouseBtn(win: ?*Window, lp: LPARAM, btn: event_mod.MouseButton, press: bool) void {
     if (win) |w| {
-        const x: i32 = @as(i16, @truncate(lp));
-        const y: i32 = @as(i16, @truncate(lp >> 16));
+        const px: i32 = @as(i16, @truncate(lp));
+        const py: i32 = @as(i16, @truncate(lp >> 16));
+        const x = physToLog(px, w.dpi_scale);
+        const y = physToLog(py, w.dpi_scale);
         const ev = if (press)
             Event{ .mouse_press = .{ .x = x, .y = y, .button = btn } }
         else
             Event{ .mouse_release = .{ .x = x, .y = y, .button = btn } };
         w.pushEvent(ev);
     }
+}
+
+inline fn physToLog(phys: i32, scale: f32) i32 {
+    if (scale <= 1.0) return phys;
+    return @intFromFloat(@round(@as(f32, @floatFromInt(phys)) / scale));
 }
 
 fn currentModifiers() event_mod.Modifiers {

@@ -1,12 +1,13 @@
 # Layout Progress
 
-## Status: Complete (M3)
+## Status: Complete (M3 + gap-close)
 
 ### Done
 - Geometry types: Point, Size, Rect, Margin (`src/layout/geometry.zig`)
 - BoxLayout (`src/layout/box.zig`) — Direction.vertical/horizontal, spacing, padding, compute(), measure()
+- BoxLayout.computeWithFlex() — proportional flex distribution among items with flex[i] > 0
 - GridLayout (`src/layout/grid.zig`) — configurable cols/rows/gap/padding, compute(bounds, out), measure(cell)
-- GridLayout validated live: 2×2 grid with 4 colored cells in M3 demo
+- FlowLayout (`src/layout/flow.zig`) — wraps items to next row, gap_x/gap_y/padding, compute(), measure()
 
 ### In Progress
 _(nothing)_
@@ -15,5 +16,5 @@ _(nothing)_
 _(nothing)_
 
 ### Up Next
-- Flow layout (wrap to new line when row is full)
-- Constraint / stretch factor system
+- Constraint system (min/max size per item)
+- Absolute/anchor layout

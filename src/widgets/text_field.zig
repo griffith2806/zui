@@ -8,16 +8,17 @@ const Event    = @import("../events/event.zig").Event;
 const cb       = @import("../platform/win32/clipboard.zig");
 
 pub const TextField = struct {
-    text:    std.ArrayListUnmanaged(u8) = .empty,
-    cursor:  usize = 0,
-    focused: bool  = false,
-    hovered: bool  = false,
+    text:       std.ArrayListUnmanaged(u8) = .empty,
+    cursor:     usize = 0,
+    view_start: usize = 0,  // byte offset: scroll left until cursor is visible
+    focused:    bool  = false,
+    hovered:    bool  = false,
 
     pub fn deinit(self: *TextField, alloc: std.mem.Allocator) void {
         self.text.deinit(alloc);
     }
 
-    pub fn draw(self: *const TextField, r: *Renderer, rect: Rect, theme: Theme) void {
+    pub fn draw(self: *TextField, r: *Renderer, rect: Rect, theme: Theme) void {
         // Rounded background
         r.fillRoundRect(rect, 6, theme.input_bg);
 
@@ -28,17 +29,31 @@ pub const TextField = struct {
 
         const tx = rect.x + 10;
         const ty = rect.y + @as(i32, @intCast(rect.height / 2)) - 7;
+        const usable_w = rect.width -| 20;
 
         if (self.text.items.len > 0) {
-            r.drawText(self.text.items, tx, ty, theme.fg);
+            // Scroll view_start forward until pre-cursor text fits in usable_w
+            const full = self.text.items;
+            while (self.view_start < self.cursor) {
+                const pre = full[self.view_start..self.cursor];
+                if (r.textWidth(pre) <= usable_w) break;
+                self.view_start += nextCharLen(full, self.view_start);
+            }
+            // Scroll view_start backward if cursor moved left of view
+            while (self.view_start > 0 and self.view_start > self.cursor) {
+                self.view_start -= prevCharLen(full, self.view_start);
+            }
+            r.drawText(full[self.view_start..], tx, ty, theme.fg);
         } else {
-            // Placeholder hint
             r.drawText("Type here...", tx, ty, theme.input_hint);
         }
 
         if (self.focused) {
-            // Cursor positioned by measuring text up to cursor byte offset
-            const cursor_x = tx + @as(i32, @intCast(r.textWidth(self.text.items[0..self.cursor])));
+            const pre = if (self.cursor > self.view_start)
+                self.text.items[self.view_start..self.cursor]
+            else
+                "";
+            const cursor_x = tx + @as(i32, @intCast(r.textWidth(pre)));
             r.fillRect(Rect.init(cursor_x, ty, 1, 16), theme.fg);
         }
     }
