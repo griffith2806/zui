@@ -20,7 +20,7 @@ const FW_SEMIBOLD:        INT  = 600;
 const DEFAULT_CHARSET:    DWORD = 1;
 const OUT_DEFAULT_PRECIS: DWORD = 0;
 const CLIP_DEFAULT_PRECIS:DWORD = 0;
-const DEFAULT_QUALITY:    DWORD = 0;
+const CLEARTYPE_QUALITY:  DWORD = 5;
 const FF_SWISS:           DWORD = 0x20;
 const TA_LEFT:            UINT  = 0;
 const TA_TOP:             UINT  = 0;
@@ -77,7 +77,7 @@ pub const Renderer = struct {
             self.gdi_fonts[i] = CreateFontW(
                 -px, 0, 0, 0, weight, 0, 0, 0,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                DEFAULT_QUALITY, FF_SWISS, SEGOE_UI,
+                CLEARTYPE_QUALITY, FF_SWISS, SEGOE_UI,
             );
         }
     }
