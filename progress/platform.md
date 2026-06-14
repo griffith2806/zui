@@ -6,8 +6,8 @@
 - Win32 platform backend (`src/platform/win32/window.zig`) — fully working
   - Window creation, message loop, WndProc → zui Events
   - Mouse/keyboard/resize/close, clipboard, modifier tracking
-  - DWM Mica client-area compositing via `DwmExtendFrameIntoClientArea({-1,-1,-1,-1})`
-    (`DWMSBT_MAINWINDOW` + `WS_EX_NOREDIRECTIONBITMAP` — Mica renders behind entire client area)
+  - DWM Mica title-bar compositing via `DWMSBT_MAINWINDOW` — Mica on title bar and window chrome
+    (client-area Mica requires DirectComposition; `WS_EX_NOREDIRECTIONBITMAP` breaks GDI BitBlt)
 - X11 backend (`src/platform/x11/window.zig`) — M19 full implementation written
   - XOpenDisplay / XCreateSimpleWindow / XMapWindow
   - Pixel buffer allocated with the Zig allocator; XImage + XPutImage for software blit
