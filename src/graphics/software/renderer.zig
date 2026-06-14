@@ -7,12 +7,14 @@ const bfont = @import("font.zig");
 
 const HDC    = *opaque {};
 const HFONT  = *opaque {};
+const HRGN   = *opaque {};
 const DWORD  = u32;
 const INT    = i32;
 const BOOL   = i32;
 const LONG   = i32;
 
-const GdiSize = extern struct { cx: LONG, cy: LONG };
+const GdiSize  = extern struct { cx: LONG, cy: LONG };
+const GdiRect  = extern struct { left: LONG, top: LONG, right: LONG, bottom: LONG };
 
 const TRANSPARENT_BK:     INT  = 1;
 const FW_NORMAL:          INT  = 400;
@@ -42,6 +44,12 @@ extern "gdi32" fn SelectObject(hdc: HDC, h: *anyopaque) callconv(std.builtin.Cal
 extern "gdi32" fn DeleteObject(ho: *anyopaque) callconv(std.builtin.CallingConvention.winapi) BOOL;
 extern "gdi32" fn TextOutW(hdc: HDC, x: INT, y: INT, lpString: [*]const u16, c: INT) callconv(std.builtin.CallingConvention.winapi) BOOL;
 extern "gdi32" fn GetTextExtentPoint32W(hdc: HDC, lpString: [*]const u16, c: INT, lpSize: *GdiSize) callconv(std.builtin.CallingConvention.winapi) BOOL;
+/// Replaces the current clipping region with the intersection of the current
+/// region and the specified rectangle. Returns NULLREGION/SIMPLEREGION/COMPLEXREGION or ERROR.
+extern "gdi32" fn IntersectClipRect(hdc: HDC, left: INT, top: INT, right: INT, bottom: INT) callconv(std.builtin.CallingConvention.winapi) INT;
+/// Selects a region as the current clipping region for the DC.
+/// Pass null to remove the clipping region entirely.
+extern "gdi32" fn SelectClipRgn(hdc: HDC, hrgn: ?HRGN) callconv(std.builtin.CallingConvention.winapi) INT;
 
 // ── Font size table ───────────────────────────────────────────────────────────
 // Indexed by `scale` (1..6).  Scale 0 is unused; scale 1 = body text.
@@ -67,6 +75,9 @@ const TextCmd = struct {
     y:     i32,
     color: Color,
     scale: u32,
+    /// Active clip rect at queue time, in physical DC pixels.
+    /// null means no clip was active — draw without restriction.
+    clip:  ?GdiRect,
 };
 
 // ── Pixel format: Win32 DIB BGRA (0x00RRGGBB little-endian) ──────────────────
@@ -85,6 +96,8 @@ pub const Renderer = struct {
     text_cmd_count: usize = 0,
     text_wbuf:      [TEXT_WBUF_CAP]u16 = undefined,
     text_wbuf_pos:  usize = 0,
+    // Active clip rect in LOGICAL pixels (null = no clipping).
+    clip: ?Rect = null,
 
     pub fn init(pixels: [*]u32, width: u32, height: u32) Renderer {
         return .{ .pixels = pixels, .width = width, .height = height };
@@ -110,6 +123,19 @@ pub const Renderer = struct {
         }
     }
 
+    // ── Clip rect ─────────────────────────────────────────────────────────────
+
+    /// Set an active clip rectangle in logical pixels.  All subsequent draw
+    /// calls are silently constrained to this region.  Pass null to disable.
+    pub fn setClip(self: *Renderer, rect: ?Rect) void {
+        self.clip = rect;
+    }
+
+    /// Remove the active clip rectangle (equivalent to setClip(null)).
+    pub fn clearClip(self: *Renderer) void {
+        self.clip = null;
+    }
+
     // ── DPI helpers ───────────────────────────────────────────────────────────
 
     inline fn toPhysI(self: *const Renderer, v: i32) i32 {
@@ -119,6 +145,27 @@ pub const Renderer = struct {
     inline fn toPhysU(self: *const Renderer, v: u32) u32 {
         if (self.dpi_scale == 1.0) return v;
         return @intFromFloat(@round(@as(f32, @floatFromInt(v)) * self.dpi_scale));
+    }
+
+    // ── Clip helpers ──────────────────────────────────────────────────────────
+
+    /// Returns the effective logical rect after intersecting `rect` with the
+    /// active clip.  Returns null when the result is empty (nothing to draw).
+    inline fn clipLogical(self: *const Renderer, rect: Rect) ?Rect {
+        const c = self.clip orelse return rect;
+        return c.intersection(rect);
+    }
+
+    /// Returns a GdiRect (physical pixels) for the active clip rect, or null
+    /// if no clip is active.  Used to restrict GDI TextOut calls.
+    inline fn physClipGdi(self: *const Renderer) ?GdiRect {
+        const c = self.clip orelse return null;
+        return GdiRect{
+            .left   = self.toPhysI(c.x),
+            .top    = self.toPhysI(c.y),
+            .right  = self.toPhysI(c.right()),
+            .bottom = self.toPhysI(c.bottom()),
+        };
     }
 
     pub fn deinit(self: *Renderer) void {
@@ -133,11 +180,13 @@ pub const Renderer = struct {
     }
 
     pub fn fillRect(self: *Renderer, rect: Rect, color: Color) void {
+        // Apply logical clip before converting to physical pixels
+        const clipped = self.clipLogical(rect) orelse return;
         // Convert logical → physical before drawing into the physical pixel buffer
-        const x0: u32 = @intCast(@max(0, self.toPhysI(rect.x)));
-        const y0: u32 = @intCast(@max(0, self.toPhysI(rect.y)));
-        const x1: u32 = @intCast(@min(@as(i32, @intCast(self.width)),  self.toPhysI(rect.right())));
-        const y1: u32 = @intCast(@min(@as(i32, @intCast(self.height)), self.toPhysI(rect.bottom())));
+        const x0: u32 = @intCast(@max(0, self.toPhysI(clipped.x)));
+        const y0: u32 = @intCast(@max(0, self.toPhysI(clipped.y)));
+        const x1: u32 = @intCast(@min(@as(i32, @intCast(self.width)),  self.toPhysI(clipped.right())));
+        const y1: u32 = @intCast(@min(@as(i32, @intCast(self.height)), self.toPhysI(clipped.bottom())));
         if (x0 >= x1 or y0 >= y1) return;
         if (color.a == 255) {
             const v = toPixel(color);
@@ -179,6 +228,16 @@ pub const Renderer = struct {
 
     fn drawTextScale(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
         if (self.gdi_dc != null) {
+            // Quick rejection: if a clip is active and the text origin is clearly
+            // below or to the right of the clip, skip this command.  We cannot
+            // know the exact text width here without measuring, so we only reject
+            // based on the y coordinate (using LINE_H as an approximation for
+            // height) and keep commands that might be partially visible.
+            if (self.clip) |c| {
+                const font_h: i32 = @intCast(FONT_PX[@min(scale, NUM_FONT_SCALES - 1)] * 2); // generous upper bound
+                if (y + font_h < c.y or y >= c.bottom()) return;
+                if (x >= c.right()) return;
+            }
             if (self.text_cmd_count >= MAX_TEXT_CMDS) return;
             var wbuf: [1024]u16 = undefined;
             const wlen = std.unicode.utf8ToUtf16Le(&wbuf, text) catch return;
@@ -190,6 +249,8 @@ pub const Renderer = struct {
                 // Store physical coords so GDI places text at the correct pixel
                 .x = self.toPhysI(x), .y = self.toPhysI(y),
                 .color = color, .scale = scale,
+                // Capture clip as physical GdiRect for flushText
+                .clip = self.physClipGdi(),
             };
             self.text_cmd_count += 1;
             self.text_wbuf_pos  += wlen;
@@ -223,7 +284,15 @@ pub const Renderer = struct {
                 _ = SelectObject(dc, @ptrCast(hf));
                 const cr: DWORD = @as(DWORD, cmd.color.r) | (@as(DWORD, cmd.color.g) << 8) | (@as(DWORD, cmd.color.b) << 16);
                 _ = SetTextColor(dc, cr);
-                _ = TextOutW(dc, cmd.x, cmd.y, self.text_wbuf[cmd.wbuf_start..].ptr, @intCast(cmd.wbuf_len));
+                if (cmd.clip) |cl| {
+                    // Apply clip: intersect the DC clipping region with our rect,
+                    // draw the text, then reset the clip.
+                    _ = IntersectClipRect(dc, cl.left, cl.top, cl.right, cl.bottom);
+                    _ = TextOutW(dc, cmd.x, cmd.y, self.text_wbuf[cmd.wbuf_start..].ptr, @intCast(cmd.wbuf_len));
+                    _ = SelectClipRgn(dc, null);
+                } else {
+                    _ = TextOutW(dc, cmd.x, cmd.y, self.text_wbuf[cmd.wbuf_start..].ptr, @intCast(cmd.wbuf_len));
+                }
             }
         }
         self.text_cmd_count = 0;
@@ -279,20 +348,33 @@ pub const Renderer = struct {
     // ── Rounded rect ──────────────────────────────────────────────────────────
 
     pub fn fillRoundRect(self: *Renderer, rect: Rect, radius: u32, color: Color) void {
+        // Apply logical clip before rasterizing
+        const clipped = self.clipLogical(rect) orelse return;
         // Scale logical → physical before rasterizing
         const phys = Rect.init(
+            self.toPhysI(clipped.x), self.toPhysI(clipped.y),
+            self.toPhysU(clipped.width), self.toPhysU(clipped.height),
+        );
+        // Compute the physical clip bounds for the corner-arc test.
+        // We need to know where the corners of the ORIGINAL rect are so the
+        // arc math is correct, even if we're rendering a clipped sub-rect.
+        const orig_phys = Rect.init(
             self.toPhysI(rect.x), self.toPhysI(rect.y),
             self.toPhysU(rect.width), self.toPhysU(rect.height),
         );
-        self.fillRoundRectPhys(phys, self.toPhysU(radius), color);
+        self.fillRoundRectPhys(orig_phys, self.toPhysU(radius), phys, color);
     }
 
-    fn fillRoundRectPhys(self: *Renderer, rect: Rect, radius: u32, color: Color) void {
+    /// Rasterize a rounded rect.
+    /// `rect` defines the full shape (for corner arc math).
+    /// `clip_phys` defines the physical pixel region to actually write into
+    /// (already intersected with the frame buffer and any logical clip).
+    fn fillRoundRectPhys(self: *Renderer, rect: Rect, radius: u32, clip_phys: Rect, color: Color) void {
         const r: i32 = @intCast(@min(radius, @min(rect.width, rect.height) / 2));
-        const bx0: i32 = @max(0, rect.x);
-        const by0: i32 = @max(0, rect.y);
-        const bx1: i32 = @min(@as(i32, @intCast(self.width)),  rect.right());
-        const by1: i32 = @min(@as(i32, @intCast(self.height)), rect.bottom());
+        const bx0: i32 = @max(@max(0, clip_phys.x), rect.x);
+        const by0: i32 = @max(@max(0, clip_phys.y), rect.y);
+        const bx1: i32 = @min(@min(@as(i32, @intCast(self.width)),  rect.right()),  clip_phys.right());
+        const by1: i32 = @min(@min(@as(i32, @intCast(self.height)), rect.bottom()), clip_phys.bottom());
         if (bx0 >= bx1 or by0 >= by1) return;
 
         const v = toPixel(color);
@@ -353,12 +435,15 @@ pub const Renderer = struct {
     // ── Image blit ────────────────────────────────────────────────────────────
 
     /// Blit a raw pixel buffer to the frame. `pixels` contains `src_w * src_h`
-    /// values in 0xAARRGGBB format (alpha in high byte). Clips to frame bounds.
+    /// values in 0xAARRGGBB format (alpha in high byte). Clips to frame bounds
+    /// and the active clip rect.
     pub fn drawImageRaw(self: *Renderer, pixels: [*]const u32, src_w: u32, src_h: u32, dst: Rect) void {
-        const dx0: i32 = @max(0, dst.x);
-        const dy0: i32 = @max(0, dst.y);
-        const dx1: i32 = @min(@as(i32, @intCast(self.width)),  dst.right());
-        const dy1: i32 = @min(@as(i32, @intCast(self.height)), dst.bottom());
+        // Apply logical clip first
+        const dst_clipped = self.clipLogical(dst) orelse return;
+        const dx0: i32 = @max(0, dst_clipped.x);
+        const dy0: i32 = @max(0, dst_clipped.y);
+        const dx1: i32 = @min(@as(i32, @intCast(self.width)),  dst_clipped.right());
+        const dy1: i32 = @min(@as(i32, @intCast(self.height)), dst_clipped.bottom());
         if (dx0 >= dx1 or dy0 >= dy1) return;
         const ox: u32 = @intCast(dx0 - dst.x);
         const oy: u32 = @intCast(dy0 - dst.y);
@@ -400,6 +485,11 @@ pub const Renderer = struct {
 
     fn drawBitmapText(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color) void {
         const v = toPixel(color);
+        // Precompute clip bounds for the bitmap path (logical == physical when no GDI)
+        const clip_x0: i32 = if (self.clip) |c| c.x else 0;
+        const clip_y0: i32 = if (self.clip) |c| c.y else 0;
+        const clip_x1: i32 = if (self.clip) |c| c.right() else @intCast(self.width);
+        const clip_y1: i32 = if (self.clip) |c| c.bottom() else @intCast(self.height);
         for (text, 0..) |ch, ci| {
             const gx: i32 = x + @as(i32, @intCast(ci)) * @as(i32, bfont.GLYPH_W);
             const g = bfont.glyph(ch);
@@ -409,7 +499,9 @@ pub const Renderer = struct {
                     if (row_bits & (@as(u8, 1) << bit) != 0) {
                         const fpx = gx + @as(i32, 7 - bit);
                         const fpy = y + @as(i32, @intCast(ry));
-                        if (fpx >= 0 and fpx < @as(i32, @intCast(self.width)) and
+                        if (fpx >= clip_x0 and fpx < clip_x1 and
+                            fpy >= clip_y0 and fpy < clip_y1 and
+                            fpx >= 0 and fpx < @as(i32, @intCast(self.width)) and
                             fpy >= 0 and fpy < @as(i32, @intCast(self.height)))
                             self.pixels[@as(u32, @intCast(fpy)) * self.width + @as(u32, @intCast(fpx))] = v;
                     }
@@ -423,6 +515,10 @@ pub const Renderer = struct {
     fn drawBitmapTextScaled(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
         const v = toPixel(color);
         const s: i32 = @intCast(scale);
+        const clip_x0: i32 = if (self.clip) |c| c.x else 0;
+        const clip_y0: i32 = if (self.clip) |c| c.y else 0;
+        const clip_x1: i32 = if (self.clip) |c| c.right() else @intCast(self.width);
+        const clip_y1: i32 = if (self.clip) |c| c.bottom() else @intCast(self.height);
         for (text, 0..) |ch, ci| {
             const gx: i32 = x + @as(i32, @intCast(ci)) * @as(i32, bfont.GLYPH_W) * s;
             const g = bfont.glyph(ch);
@@ -437,7 +533,9 @@ pub const Renderer = struct {
                             var dx: i32 = 0;
                             while (dx < s) : (dx += 1) {
                                 const fpx = bx + dx; const fpy = by + dy;
-                                if (fpx >= 0 and fpx < @as(i32, @intCast(self.width)) and
+                                if (fpx >= clip_x0 and fpx < clip_x1 and
+                                    fpy >= clip_y0 and fpy < clip_y1 and
+                                    fpx >= 0 and fpx < @as(i32, @intCast(self.width)) and
                                     fpy >= 0 and fpy < @as(i32, @intCast(self.height)))
                                     self.pixels[@as(u32, @intCast(fpy)) * self.width + @as(u32, @intCast(fpx))] = v;
                             }

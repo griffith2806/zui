@@ -1,6 +1,6 @@
 # Graphics Progress
 
-## Status: Complete (M4 + M8 + M9 + M10 + gap-close)
+## Status: Complete (M4 + M8 + M9 + M10 + M13 + gap-close)
 
 ### Done
 - Software renderer (`src/graphics/software/renderer.zig`) — DIB pixel buffer, clear/fillRect/drawText/drawTextScaled/fillRoundRect
@@ -11,6 +11,7 @@
 - WGL context bootstrap, GL function pointer table, font atlas
 - Backend shim (`src/graphics/renderer.zig`) — comptime-selects backend
 - GDI Segoe UI Variable typography on Win32 software backend (scales 1–6)
+- M13: Renderer.setClip(?Rect) / clearClip() — logical clip rect; all draw calls (fillRect, fillRoundRect, drawImageRaw, bitmap text) clip to the active rect; deferred GDI TextOut uses IntersectClipRect/SelectClipRgn on the screen DC
 
 ### Up Next
 - drawImageRaw in OpenGL backend (texture upload + quad render)
