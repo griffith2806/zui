@@ -20,14 +20,16 @@ _Goal: open a window and paint a solid color._
 - [x] Application struct wiring platform + renderer
 - [x] `zig build run` shows a window — **verified live, dark-blue background, Escape closes**
 
-## Milestone 2 — Basic Widgets
+## ✅ Milestone 2 — Basic Widgets _(complete)_
 _Goal: render Label and Button, handle click._
 
-- [ ] Widget base trait
-- [ ] Label widget (text rendering)
-- [ ] Button widget (click signal)
-- [ ] Box layout (vertical + horizontal)
-- [ ] Event dispatch from platform → widget tree
+- [x] Widget base trait
+- [x] Label widget (text rendering with 8×8 bitmap font)
+- [x] Button widget (click signal, hover/press states)
+- [x] Box layout (vertical + horizontal, spacing, padding)
+- [x] Signal(T) generic — typed, comptime-verified connect/emit
+- [x] Event dispatch from platform → widget tree
+- [x] WinUI-style dark dashboard demo — **verified live: header, nav, counter card, buttons, about overlay all working**
 
 ## Milestone 3 — Theming + More Widgets
 _Goal: consistent look, usable widget set._
@@ -53,6 +55,18 @@ _Goal: GPU-accelerated rendering._
 
 ## Milestone 7 — Vulkan Backend
 - [ ] Vulkan renderer backend
+
+## Milestone 8 — Showcase Demo
+_Goal: a single polished app that exercises every completed subsystem — the zui equivalent of a component gallery._
+
+- [ ] Navigation sidebar (Box layout, Label, active-state highlight)
+- [ ] Counter page (Label, Button with Signal, large text display)
+- [ ] Color picker page (Style/Color, fillRect grid, click-to-select)
+- [ ] Layout inspector page (BoxLayout demo, nested containers)
+- [ ] Input page (TextField widget, key events, live echo)
+- [ ] Theme toggle (light ↔ dark, Theme struct)
+- [ ] About panel (overlay, version string, keyboard shortcut list)
+- [ ] Pixel-perfect WinUI-style dark-mode skin throughout
 
 ## Backlog
 - Accessibility (a11y) tree

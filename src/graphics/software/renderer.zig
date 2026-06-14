@@ -1,6 +1,7 @@
 const std = @import("std");
 const Color = @import("../../style/color.zig").Color;
 const Rect  = @import("../../layout/geometry.zig").Rect;
+const font  = @import("font.zig");
 
 // Pixel format: Win32 DIB BGRA (stored as 0x00RRGGBB u32 on little-endian).
 // Blue in byte 0, green in byte 1, red in byte 2, alpha/pad in byte 3.
@@ -33,6 +34,36 @@ pub const Renderer = struct {
                 self.pixels[row + @as(u32, @intCast(x))] = v;
             }
         }
+    }
+
+    /// Draw a single line of ASCII text. Non-printable bytes are skipped.
+    pub fn drawText(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color) void {
+        const v = toPixel(color);
+        for (text, 0..) |ch, ci| {
+            const gx: i32 = x + @as(i32, @intCast(ci)) * @as(i32, font.GLYPH_W);
+            const g = font.glyph(ch);
+            for (g, 0..) |row_bits, ry| {
+                var bit: u3 = 7;
+                while (true) {
+                    if (row_bits & (@as(u8, 1) << bit) != 0) {
+                        const px = gx + @as(i32, 7 - bit);
+                        const py = y  + @as(i32, @intCast(ry));
+                        if (px >= 0 and px < @as(i32, @intCast(self.width)) and
+                            py >= 0 and py < @as(i32, @intCast(self.height)))
+                        {
+                            self.pixels[@as(u32, @intCast(py)) * self.width + @as(u32, @intCast(px))] = v;
+                        }
+                    }
+                    if (bit == 0) break;
+                    bit -= 1;
+                }
+            }
+        }
+    }
+
+    /// Measure the pixel width of a text string.
+    pub fn textWidth(text: []const u8) u32 {
+        return @intCast(text.len * font.GLYPH_W);
     }
 
     fn toPixel(c: Color) u32 {

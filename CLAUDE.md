@@ -87,3 +87,23 @@ Rules:
 - All public types exported from `src/root.zig`.
 - Tests live alongside source (`test "..." { ... }` blocks in the same file).
 - No external C dependencies unless inside a `platform/` or `graphics/` backend.
+
+## Zig Std Source — Required for API Calls
+
+Zig 0.16.0 std library is at:
+```
+c:\Users\danie\AppData\Roaming\Code\User\globalStorage\ziglang.vscode-zig\zig\x86_64-windows-0.16.0\lib\std\
+```
+
+**Before writing any `std.*` API call you are not 100% certain about, read the relevant source file to verify current signatures.** Zig's std API changes between releases; do not rely on training-data memory for function signatures, field names, or error sets.
+
+Examples:
+- Using `std.mem` → read `.../lib/std/mem.zig`
+- Using `std.ArrayList` → read `.../lib/std/array_list.zig`
+- Using `std.fmt` → read `.../lib/std/fmt.zig`
+- Using build APIs → read `.../lib/std/Build.zig`
+
+## Build Tips
+
+- Use `zig build --watch` for continuous rebuild on file save during development.
+- In `build.zig`, prefer `run_cmd.step.dependOn(&exe.step)` over `b.getInstallStep()` for the `run` step to skip the install copy on every run.

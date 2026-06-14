@@ -141,6 +141,7 @@ extern "user32" fn GetDC(hWnd: ?HWND) callconv(std.builtin.CallingConvention.win
 extern "user32" fn ReleaseDC(hWnd: ?HWND, hDC: HDC) callconv(std.builtin.CallingConvention.winapi) INT;
 extern "user32" fn BeginPaint(hWnd: HWND, lpPaint: *PAINTSTRUCT) callconv(std.builtin.CallingConvention.winapi) ?HDC;
 extern "user32" fn EndPaint(hWnd: HWND, lpPaint: *const PAINTSTRUCT) callconv(std.builtin.CallingConvention.winapi) BOOL;
+extern "user32" fn AdjustWindowRect(lpRect: *RECT, dwStyle: DWORD, bMenu: BOOL) callconv(std.builtin.CallingConvention.winapi) BOOL;
 
 extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(std.builtin.CallingConvention.winapi) ?HDC;
 extern "gdi32" fn DeleteDC(hdc: HDC) callconv(std.builtin.CallingConvention.winapi) BOOL;
@@ -196,11 +197,15 @@ pub const Window = struct {
         const title_len = try std.unicode.utf8ToUtf16Le(title_buf[0 .. title_buf.len - 1], title);
         title_buf[title_len] = 0;
 
+        // Adjust so the CLIENT area is exactly width×height, not the total window.
+        var wr = RECT{ .left = 0, .top = 0, .right = @intCast(width), .bottom = @intCast(height) };
+        _ = AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
+
         const hwnd = CreateWindowExW(
             0, CLASS_NAME, title_buf[0..title_len :0],
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT,
-            @intCast(width), @intCast(height),
+            wr.right - wr.left, wr.bottom - wr.top,
             null, null, hinstance, null,
         ) orelse return error.CreateWindowFailed;
 
@@ -297,11 +302,13 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
             return 0;
         },
         WM_SIZE => {
+            // width/height stay fixed to DIB dimensions — only push an event.
             if (win) |w| {
                 const ulp: usize = @bitCast(lp);
-                w.width  = @as(u16, @truncate(ulp & 0xFFFF));
-                w.height = @as(u16, @truncate(ulp >> 16));
-                w.pushEvent(.{ .resize = .{ .width = w.width, .height = w.height } });
+                w.pushEvent(.{ .resize = .{
+                    .width  = @as(u16, @truncate(ulp & 0xFFFF)),
+                    .height = @as(u16, @truncate(ulp >> 16)),
+                }});
             }
         },
         WM_PAINT => {
