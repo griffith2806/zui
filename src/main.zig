@@ -22,7 +22,7 @@ var W: u32 = 1060;
 var H: u32 = 680;
 
 // ── Navigation ───────────────────────────────────────────────────────────────
-const Page = enum { dashboard, controls, inputs, overlays, colors, layout, animations, about };
+const Page = enum { dashboard, controls, inputs, overlays, colors, layout, styles, animations, about };
 
 const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
     .{ .label = "Dashboard", .page = .dashboard, .icon = "D" },
@@ -31,6 +31,7 @@ const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
     .{ .label = "Overlays",  .page = .overlays,  .icon = "O" },
     .{ .label = "Colors",    .page = .colors,    .icon = "P" },
     .{ .label = "Layout",     .page = .layout,     .icon = "L" },
+    .{ .label = "Styles",     .page = .styles,     .icon = "S" },
     .{ .label = "Animations", .page = .animations, .icon = "M" },
     .{ .label = "About",      .page = .about,      .icon = "A" },
 };
@@ -557,6 +558,7 @@ pub fn main(init: std.process.Init) !void {
     var page: Page     = .dashboard;
     var dark_mode      = true;
     var about_expanded = false;
+    var redraw_cnt: u32 = 3; // frames to draw; set on events/animations
 
     var controls = ControlsState{};
     try controls.init(alloc, &dark_mode);
@@ -585,7 +587,9 @@ pub fn main(init: std.process.Init) !void {
         const win_rect = zui.Rect.init(0, 0, W, H);
 
         // ── Events ──────────────────────────────────────────────────────────
+        var got_event = false;
         while (app.pollEvent()) |ev| {
+            got_event = true;
             switch (ev) {
                 .close     => app.window.should_close = true,
                 .key_press => |k| { if (k.key == .escape) app.window.should_close = true; },
@@ -620,6 +624,8 @@ pub fn main(init: std.process.Init) !void {
             }
         }
 
+        if (got_event) redraw_cnt = 30;
+
         // ── Update ──────────────────────────────────────────────────────────
         app.syncSize();
 
@@ -632,23 +638,39 @@ pub fn main(init: std.process.Init) !void {
                               (1.0 - @exp(-10.0 * dt_s));
         }
 
-        // ── Draw ────────────────────────────────────────────────────────────
-        app.renderer.clear(if (dark_mode) BG else zui.Color.rgb(240, 240, 245));
-        drawSidebar(&app.renderer, page, &nav_rects, &nav_hover_t, dark_mode);
-        drawHeader(&app.renderer, page, dark_mode);
-
-        switch (page) {
-            .dashboard => drawDashboard(&app.renderer, controls.counter, dark_mode),
-            .controls  => controls.draw(&app.renderer, dark_mode, theme),
-            .inputs    => inputs.draw(&app.renderer, dark_mode),
-            .overlays  => overlays.draw(&app.renderer, dark_mode, zui.Rect.init(0, 0, W, H)),
-            .colors     => drawColors(&app.renderer, dark_mode),
-            .layout     => drawLayout(&app.renderer, dark_mode, theme),
-            .animations => animations.draw(&app.renderer, dark_mode),
-            .about      => drawAbout(&app.renderer, about_expanded, dark_mode),
+        // Pages with continuously running animations force redraws beyond events
+        if (page == .controls) redraw_cnt = @max(redraw_cnt, 1);
+        if (page == .overlays and overlays.tip_hovered) redraw_cnt = @max(redraw_cnt, 2);
+        if (page == .animations) {
+            var anim_live = !animations.ball_x.isSettled() or !animations.ball_y.isSettled() or
+                            !animations.color_anim.r.isSettled();
+            if (!anim_live) for (animations.ease_vals) |v| {
+                if (!v.isSettled()) { anim_live = true; break; }
+            };
+            if (anim_live) redraw_cnt = @max(redraw_cnt, 1);
         }
 
-        app.present();
+        // ── Draw (only when dirty) ───────────────────────────────────────────
+        if (redraw_cnt > 0) {
+            redraw_cnt -= 1;
+            app.renderer.clear(if (dark_mode) BG else zui.Color.rgb(240, 240, 245));
+            drawSidebar(&app.renderer, page, &nav_rects, &nav_hover_t, dark_mode);
+            drawHeader(&app.renderer, page, dark_mode);
+
+            switch (page) {
+                .dashboard  => drawDashboard(&app.renderer, controls.counter, dark_mode),
+                .controls   => controls.draw(&app.renderer, dark_mode, theme),
+                .inputs     => inputs.draw(&app.renderer, dark_mode),
+                .overlays   => overlays.draw(&app.renderer, dark_mode, zui.Rect.init(0, 0, W, H)),
+                .colors     => drawColors(&app.renderer, dark_mode),
+                .layout     => drawLayout(&app.renderer, dark_mode, theme),
+                .styles     => drawStyles(&app.renderer, dark_mode),
+                .animations => animations.draw(&app.renderer, dark_mode),
+                .about      => drawAbout(&app.renderer, about_expanded, dark_mode),
+            }
+
+            app.present();
+        }
         app.capFps(60);
     }
 }
@@ -703,10 +725,9 @@ fn drawHeader(r: *zui.Renderer, page: Page, dark_mode: bool) void {
     r.fillRect(zui.Rect.init(NAV_W, HDR_H, content_w, 1), SEP);
 
     const page_name = switch (page) {
-        .dashboard  => "Dashboard", .controls => "Controls", .inputs => "Inputs",
-        .overlays   => "Overlays",  .colors   => "Colors",   .layout => "Layout",
-        .animations => "Animations",
-        .about      => "About",
+        .dashboard  => "Dashboard", .controls => "Controls",    .inputs => "Inputs",
+        .overlays   => "Overlays",  .colors   => "Colors",      .layout => "Layout",
+        .styles     => "Styles",    .animations => "Animations", .about  => "About",
     };
     const bx = NAV_W + 20;
     const gw: i32 = @intCast(r.textWidth("zui Gallery"));
@@ -962,6 +983,134 @@ fn drawAbout(r: *zui.Renderer, about_expanded: bool, dark_mode: bool) void {
         for (arch, 0..) |line, i|
             r.drawText(line, lx + 12, expand_y + 28 + @as(i32, @intCast(i)) * 20, FG_TER);
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PAGE: Styles
+// ══════════════════════════════════════════════════════════════════════════════
+fn drawStyles(r: *zui.Renderer, dark_mode: bool) void {
+    const lx = cx(); const lcy = HDR_H + 16;
+    const base = lcy + 60;
+    const rx: i32 = lx + 420;
+
+    r.drawTextScaled("Styles", lx, lcy, if (dark_mode) FG else zui.Color.rgb(20, 20, 20), 2);
+    r.drawText("Style.merge(), Stylesheet parser, and Font descriptors", lx, lcy + 30, FG_SEC);
+
+    // ── Style.merge() ────────────────────────────────────────────────────────
+    sectionLabel(r, lx, base, "Style.merge()");
+    r.drawText("Override wins; null fields inherit from base", lx, base + 20, FG_TER);
+
+    const box_w: u32 = 116;
+    const box_h: u32 = 76;
+    const base_bg     = zui.Color.rgb( 42,  42,  48);
+    const over_bg     = ACCENT;
+    const merged_bg   = ACCENT;
+    const base_border = SEP;
+
+    // Base card
+    const bx0: i32 = lx;
+    r.drawText("Base", bx0, base + 40, FG_TER);
+    r.fillRoundRect(zui.Rect.init(bx0, base + 56, box_w, box_h), 6, base_border);
+    r.fillRoundRect(zui.Rect.init(bx0 + 1, base + 57, box_w - 2, box_h - 2), 5, base_bg);
+    r.drawText("fg: white", bx0 + 8, base + 72, FG);
+    r.drawText("bg: #2a2a30", bx0 + 8, base + 88, FG_SEC);
+    r.drawText("border: grey", bx0 + 8, base + 104, FG_SEC);
+    r.drawText("radius: 4", bx0 + 8, base + 120, FG_SEC);
+
+    // + label
+    r.drawTextScaled("+", bx0 + @as(i32, box_w) + 10, base + 84, FG_TER, 2);
+
+    // Override card
+    const bx1: i32 = bx0 + @as(i32, box_w) + 38;
+    r.drawText("Override", bx1, base + 40, FG_TER);
+    r.fillRoundRect(zui.Rect.init(bx1, base + 56, box_w, box_h), 12, over_bg);
+    r.drawText("fg: (null)", bx1 + 8, base + 72, FG_SEC);
+    r.drawText("bg: accent", bx1 + 8, base + 88, FG);
+    r.drawText("border: (null)", bx1 + 8, base + 104, FG_SEC);
+    r.drawText("radius: 12", bx1 + 8, base + 120, FG);
+
+    // = label
+    r.drawTextScaled("=", bx1 + @as(i32, box_w) + 12, base + 84, FG_TER, 2);
+
+    // Merged card
+    const bx2: i32 = bx1 + @as(i32, box_w) + 40;
+    r.drawText("Merged", bx2, base + 40, FG_TER);
+    r.fillRoundRect(zui.Rect.init(bx2, base + 56, box_w, box_h), 12, base_border);
+    r.fillRoundRect(zui.Rect.init(bx2 + 1, base + 57, box_w - 2, box_h - 2), 11, merged_bg);
+    r.drawText("fg: white", bx2 + 8, base + 72, FG);
+    r.drawText("bg: accent", bx2 + 8, base + 88, FG);
+    r.drawText("border: grey", bx2 + 8, base + 104, FG);
+    r.drawText("radius: 12", bx2 + 8, base + 120, FG);
+
+    // ── Stylesheet parser ─────────────────────────────────────────────────────
+    sectionLabel(r, lx, base + 160, "Stylesheet  (.zss parser)");
+
+    // Code block
+    const code_r = zui.Rect.init(lx, base + 180, 200, 118);
+    r.fillRoundRect(code_r, 8, zui.Color.rgb(24, 24, 28));
+    r.fillRoundRect(zui.Rect.init(code_r.x + 1, code_r.y + 1, code_r.width - 2, code_r.height - 2),
+        7, zui.Color.rgb(28, 28, 34));
+    const zss_lines = [_][]const u8{
+        "# widget.zss",
+        "bg: #5a2d82",
+        "fg: #ffffff",
+        "border: #8040c0",
+        "radius: 10",
+        "padding: 14",
+    };
+    for (zss_lines, 0..) |line, i| {
+        const lcolor = if (i == 0) FG_TER else if (line[0] == 'b' and line[1] == 'g') ACCENT_HV else FG_SEC;
+        r.drawText(line, code_r.x + 10, code_r.y + 10 + @as(i32, @intCast(i)) * 18, lcolor);
+    }
+
+    // Parsed preview
+    r.drawText("->", lx + 214, base + 226, FG_TER);
+    const purple     = zui.Color.rgb( 90,  45, 130);
+    const purple_bd  = zui.Color.rgb(128,  64, 192);
+    const preview_r  = zui.Rect.init(lx + 234, base + 180, 130, 118);
+    r.fillRoundRect(preview_r, 10, purple_bd);
+    r.fillRoundRect(zui.Rect.init(preview_r.x + 1, preview_r.y + 1, preview_r.width - 2, preview_r.height - 2),
+        9, purple);
+    r.drawText("Parsed result:", preview_r.x + 14, preview_r.y + 14, FG_SEC);
+    r.drawText("bg  #5a2d82", preview_r.x + 14, preview_r.y + 36, FG);
+    r.drawText("fg  #ffffff", preview_r.x + 14, preview_r.y + 54, FG);
+    r.drawText("r:  10", preview_r.x + 14, preview_r.y + 72, FG);
+    r.drawText("pad: 14", preview_r.x + 14, preview_r.y + 90, FG);
+
+    // ── Font descriptors ──────────────────────────────────────────────────────
+    sectionLabel(r, rx, base, "Font descriptors");
+    r.drawText("Font struct (not yet wired to renderer — uses scale parameter for now)",
+        rx, base + 20, FG_TER);
+
+    const presets = [_]struct {
+        label: []const u8, sample: []const u8, desc: []const u8, scale: u8,
+    }{
+        .{ .label = "heading()",  .sample = "Heading text",  .desc = "Segoe UI Variable  20pt  semibold", .scale = 2 },
+        .{ .label = "default()",  .sample = "Body text",     .desc = "Segoe UI Variable  12pt  regular",  .scale = 1 },
+        .{ .label = "caption()",  .sample = "Caption text",  .desc = "Segoe UI Variable  10pt  regular",  .scale = 1 },
+        .{ .label = "mono()",     .sample = "Monospace",     .desc = "Cascadia Code       12pt  regular",  .scale = 1 },
+    };
+    var fy: i32 = base + 44;
+    for (presets) |p| {
+        r.drawText(p.label, rx, fy, FG_TER);
+        if (p.scale > 1) {
+            r.drawTextScaled(p.sample, rx + 90, fy - 4, FG, p.scale);
+        } else {
+            r.drawText(p.sample, rx + 90, fy + 2, FG);
+        }
+        r.drawText(p.desc, rx + 90, fy + 20, FG_SEC);
+        r.fillRect(zui.Rect.init(rx, fy + 38, 320, 1), SEP);
+        fy += 52;
+    }
+
+    // Style.empty
+    sectionLabel(r, rx, base + 270, "Style.empty");
+    r.drawText("All fields null — use as a no-op override:", rx, base + 290, FG_TER);
+    const empty_box = zui.Rect.init(rx, base + 310, 200, 50);
+    r.fillRoundRect(empty_box, 6, SEP);
+    r.fillRoundRect(zui.Rect.init(empty_box.x + 1, empty_box.y + 1, empty_box.width - 2, empty_box.height - 2),
+        5, if (dark_mode) BG_CARD else zui.Color.rgb(255, 255, 255));
+    r.drawText("base.merge(Style.empty) == base", empty_box.x + 10, empty_box.y + 16, FG_SEC);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

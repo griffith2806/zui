@@ -33,7 +33,7 @@ const exe = b.addExecutable(.{
 });
 ```
 
-`backend` option defaults to `.software`. Pass `.backend = "opengl"` to the dependency call for GPU rendering.
+`backend` option defaults to `.software`. Pass `-Dbackend=opengl` or `-Dbackend=vulkan` on the command line.
 
 ---
 
@@ -46,29 +46,50 @@ zui.Renderer          // drawing primitives (obtained from app.renderer)
 // Style
 zui.Color             // RGBA color type
 zui.Theme             // dark/light preset, runtime toggle
+zui.Style             // per-widget style override (fg/bg/border/radius/padding/font)
+zui.Stylesheet        // .zss flat CSS parser
+zui.Font              // font descriptor (family/size/weight/style)
 // Layout
 zui.Rect              // i32 x/y, u32 width/height
 zui.Point             // i32 x/y
 zui.Size              // u32 width/height
 zui.Margin            // u32 top/right/bottom/left
-zui.BoxLayout         // vertical/horizontal, spacing, padding
+zui.BoxLayout         // vertical/horizontal, spacing, padding, flex factors
 zui.Direction         // .vertical | .horizontal
 zui.GridLayout        // N×M grid, gap, padding
+zui.FlowLayout        // CSS flex-wrap: wrap equivalent
 // Widgets
 zui.Button            // clickable button with hover animation
 zui.ButtonStyle       // bg/bg_hover/bg_press/fg/radius/pad_x/pad_y
 zui.Label             // text display
-zui.TextField         // text input with cursor, clipboard
+zui.TextField         // single-line text input with cursor, clipboard
+zui.TextArea          // multi-line text editor with undo stack
 zui.Container         // titled panel
 zui.Checkbox          // toggle with animated checkmark
 zui.Slider            // 0..1 drag input
+zui.ProgressBar       // determinate fill bar
+zui.TabView           // tab strip with content switching
+zui.DropDown          // popup select list
+zui.ScrollArea        // scrollable viewport wrapping any child
+zui.ListView          // data list with selection and keyboard nav
+zui.Dialog            // modal dialog with title/OK/Cancel
+zui.Menu              // popup context menu
+zui.Tooltip           // 0.5s hover delay tooltip
 // Signals
 zui.Signal(T)         // typed comptime-verified observer
 // Events
 zui.Event             // union of all input events
 zui.KeyCode           // keyboard keys enum
-// Animation
-zui.Tween             // exponential-decay lerp
+// Animation (new — spring/easing based)
+zui.Animated          // f32 spring/ease animation
+zui.AnimatedColor     // per-channel RGBA animation
+zui.Easing            // .linear | .ease_out | .ease_in_out | .spring
+// Animation (legacy — exponential decay)
+zui.Tween             // exponential-decay lerp (used internally by widgets)
+// Graphics
+zui.Image             // owned pixel buffer with draw/scale support
+// Focus
+zui.FocusManager      // Tab-key focus ring across widgets
 ```
 
 ---
@@ -82,7 +103,6 @@ pub const Config = struct {
     height: u32 = 600,
 };
 
-// Init
 var app = try zui.Application.init(alloc, .{
     .title = "My App", .width = 800, .height = 600,
 });
@@ -102,7 +122,9 @@ app.present()                 // blit rendered frame to screen
 app.capFps(target_fps: u32)   // sleep remainder of frame slot; call after present()
 ```
 
-### Canonical main loop
+### Canonical main loop (with dirty rendering)
+
+The dirty-rendering pattern avoids redrawing every frame when nothing has changed — critical for CPU usage. Static pages cost 0% CPU once events settle.
 
 ```zig
 pub fn main(init: std.process.Init) !void {
@@ -110,10 +132,14 @@ pub fn main(init: std.process.Init) !void {
     var app = try zui.Application.init(alloc, .{ .title = "App", .width = 800, .height = 600 });
     defer app.deinit();
 
-    while (!app.window.should_close) {
-        const dt_s = app.deltaSeconds();   // ← must be first in loop
+    var redraw_cnt: u32 = 3; // initial frames to paint before going idle
 
+    while (!app.window.should_close) {
+        const dt_s = app.deltaSeconds(); // ← must be first in loop
+
+        var got_event = false;
         while (app.pollEvent()) |ev| {
+            got_event = true;
             switch (ev) {
                 .close     => app.window.should_close = true,
                 .key_press => |k| { if (k.key == .escape) app.window.should_close = true; },
@@ -121,18 +147,28 @@ pub fn main(init: std.process.Init) !void {
             }
             // forward ev to widgets here
         }
+        if (got_event) redraw_cnt = 30; // ~0.5s grace covers hover fade-outs
 
-        app.syncSize();                    // ← after events, before draw
-        // update W/H from app.window.width / app.window.height if you track size
+        app.syncSize();
 
-        // animate widgets
-        // draw widgets
+        // Keep redrawing while animations are live
+        // if (my_animated_value.isSettled() == false) redraw_cnt = @max(redraw_cnt, 1);
 
-        app.present();
+        if (redraw_cnt > 0) {
+            redraw_cnt -= 1;
+            app.renderer.clear(bg_color);
+            // draw widgets here
+            app.present();
+        }
+
         app.capFps(60);
     }
 }
 ```
+
+### Memory model
+
+`init.arena.allocator()` is an arena that lives for the process lifetime — it never frees during the run. This is intentional: widget state, signal slots, and text buffers allocate once at init. There are no per-frame allocations. The dominant memory consumer is the pixel buffer (software renderer only): at 200% DPI on a 1920×1080 monitor, the backbuffer is ~2120×1360×4 bytes ≈ 11.5 MB. At 4K/200% DPI, expect ~33 MB for the pixel buffer alone.
 
 ---
 
@@ -150,12 +186,25 @@ r.drawTextScaled(text: []const u8, x: i32, y: i32, color: Color, scale: u8)
     // Uses GDI Segoe UI Variable (ClearType) on Windows
 r.textWidth(text: []const u8) u32
 r.textWidthScaled(text: []const u8, scale: u8) u32
+r.drawImage(image: Image, dst: Rect) void     // nearest-neighbor scale blit
+r.drawScrollbar(rect: Rect, thumb: Rect, theme: Theme) void
+
+// Clipping (M13+)
+r.setClip(rect: Rect) void   // restrict subsequent draws to rect
+r.clearClip() void           // remove clip
 ```
 
 `fillRoundRect` draws a semi-transparent rounded rectangle. Call it twice (border + inset) for bordered cards:
 ```zig
 r.fillRoundRect(rect, 8, border_color);
 r.fillRoundRect(Rect.init(rect.x+1, rect.y+1, rect.width-2, rect.height-2), 7, fill_color);
+```
+
+Text clipping pattern:
+```zig
+r.setClip(label_rect);
+r.drawText(long_text, label_rect.x, label_rect.y, color);
+r.clearClip();
 ```
 
 ---
@@ -208,7 +257,95 @@ pub const Theme = struct {
 };
 ```
 
-Pass `theme` to `TextField.draw` and `Container.draw`. Use for consistent colors across widgets.
+Pass `theme` to widget draw calls for consistent colors. Toggle with `dark_mode = !dark_mode`.
+
+---
+
+## Style / Stylesheet / Font
+
+### Style
+
+Per-widget style override. All fields are optional — `null` means "inherit from base."
+
+```zig
+pub const Style = struct {
+    fg:      ?Color  = null,
+    bg:      ?Color  = null,
+    border:  ?Color  = null,
+    radius:  ?u32    = null,
+    padding: ?u32    = null,
+    font:    ?Font   = null,
+
+    pub const empty: Style = .{};    // no-op override — merge(base, Style.empty) == base
+
+    pub fn merge(base: Style, override: Style) Style
+        // Non-null override fields win; null fields fall back to base
+};
+```
+
+Usage:
+```zig
+const base = Style{ .bg = Color.rgb(42, 42, 48), .radius = 4 };
+const over = Style{ .bg = ACCENT, .radius = 12 };
+const merged = Style.merge(base, over);
+// merged.bg = ACCENT, merged.radius = 12, merged.fg = null (inherited from base = null)
+```
+
+### Stylesheet
+
+Parses a flat `.zss` file into a `Style`.
+
+```zig
+pub const Stylesheet = struct {
+    style: Style,
+
+    pub fn parse(src: []const u8) !Stylesheet
+};
+```
+
+`.zss` format (one `key: value` per line, `#` comments):
+```
+# widget.zss
+bg: #5a2d82
+fg: #ffffff
+border: #8040c0
+radius: 10
+padding: 14
+```
+
+Supported keys: `bg`, `fg`, `border` (hex `#RRGGBB` or `#RRGGBBAA`), `radius` (u32), `padding` (u32).
+
+Usage:
+```zig
+const ss = try zui.Stylesheet.parse(
+    \\bg: #1e1e2e
+    \\fg: #cdd6f4
+    \\radius: 8
+);
+const style = ss.style;
+```
+
+### Font
+
+Descriptor for font selection. Not yet wired to the GDI renderer (renderer uses Segoe UI Variable internally); use `drawTextScaled` with a `scale` parameter to approximate size differences.
+
+```zig
+pub const Font = struct {
+    family: []const u8 = "Segoe UI Variable",
+    size_pt: f32       = 12.0,
+    weight: Weight     = .regular,
+    style:  FontStyle  = .normal,
+
+    pub const Weight = enum { thin, light, regular, medium, semibold, bold, black };
+    pub const FontStyle = enum { normal, italic };
+
+    // Presets
+    pub fn default()  Font  // 12pt regular
+    pub fn heading()  Font  // 20pt semibold
+    pub fn caption()  Font  // 10pt regular
+    pub fn mono()     Font  // Cascadia Code 12pt regular
+};
+```
 
 ---
 
@@ -231,16 +368,15 @@ Some widgets need `deinit(alloc)` because they allocate (Signal slots or text bu
 ```zig
 pub const Button = struct {
     label:   []const u8,
-    style:   ButtonStyle = .{},   // see ButtonStyle
-    hovered: bool = false,        // read-only: set by handleEvent
-    pressed: bool = false,        // read-only
-    clicked: Signal(void) = .{},  // connect a slot here
-    hover_t: Tween = .{},
+    style:   ButtonStyle = .{},
+    hovered: bool = false,
+    pressed: bool = false,
+    clicked: Signal(void) = .{},
 
     pub fn deinit(self: *Button, alloc: Allocator) void
     pub fn update(self: *Button, dt_s: f32) void
     pub fn draw(self: *const Button, r: *Renderer, rect: Rect) void
-    pub fn handleEvent(self: *Button, event: Event, rect: Rect) bool
+    pub fn handleEvent(self: *Button, event: Event, rect: Rect) bool  // returns true on click
     pub fn preferredSize(self: *const Button, r: *const Renderer) Size
 };
 
@@ -261,7 +397,7 @@ try btn.clicked.connect(alloc, &my_state,
     struct { fn f(p: *MyState, _: void) void { p.* = ...; } }.f);
 ```
 
-`handleEvent` returns `true` on click (mouse_release inside rect). You can check the return value instead of connecting a signal for simple cases.
+`handleEvent` returns `true` on click. Check the return value for simple cases instead of connecting a signal.
 
 ---
 
@@ -281,24 +417,44 @@ pub const TextField = struct {
 };
 ```
 
-Handled keys: `Backspace`, `Delete`, `Left`, `Right`, `Home`, `End`, `Escape`/`Tab` (defocus), `Ctrl+A` (cursor to end), `Ctrl+C` (copy), `Ctrl+V` (paste).
+Handled keys: `Backspace`, `Delete`, `Left`, `Right`, `Home`, `End`, `Escape`/`Tab` (defocus), `Ctrl+A` (select all / cursor to end), `Ctrl+C` (copy), `Ctrl+V` (paste), `Ctrl+X` (cut).
 
-**Enter key is NOT handled** — detect it in the event loop:
+**Enter key is NOT handled** — detect it yourself:
 ```zig
 .key_press => |k| {
     if (k.key == .enter and field.focused and field.text.items.len > 0) {
-        // submit
+        // submit; clear with:
+        field.text.clearRetainingCapacity();
+        field.cursor = 0;
     }
 },
 ```
 
-Clear the field after submit:
+Read text: `field.text.items` (`[]u8`).
+
+---
+
+### TextArea
+
+Multi-line editor. Handles Enter (newline), word-wrap, clipboard, and an undo stack.
+
 ```zig
-field.text.clearRetainingCapacity();
-field.cursor = 0;
+pub const TextArea = struct {
+    lines:       std.ArrayListUnmanaged(std.ArrayListUnmanaged(u8)),
+    cursor_line: usize = 0,
+    cursor_col:  usize = 0,
+    scroll_y:    i32   = 0,
+    focused:     bool  = false,
+
+    pub fn init(alloc: Allocator) !TextArea
+    pub fn deinit(self: *TextArea, alloc: Allocator) void
+    pub fn draw(self: *const TextArea, r: *Renderer, rect: Rect, theme: Theme) void
+    pub fn handleEvent(self: *TextArea, event: Event, rect: Rect, alloc: Allocator) void
+    pub fn getText(self: *const TextArea, alloc: Allocator) ![]u8   // caller frees
+};
 ```
 
-Read text: `field.text.items` (`[]u8`).
+Handled keys: all TextField keys, plus `Enter` (newline), `Ctrl+Z` (undo), `Ctrl+A` (select all), `Ctrl+C/V/X` (clipboard).
 
 ---
 
@@ -306,12 +462,10 @@ Read text: `field.text.items` (`[]u8`).
 
 ```zig
 pub const Checkbox = struct {
-    checked:  bool  = false,
-    hovered:  bool  = false,
-    label:    []const u8 = "",    // drawn to the right of the box; "" = no label
-    style:    CheckboxStyle = .{},
-    check_t:  Tween = .{ .speed = 12.0 },
-    changed:  Signal(bool) = .{},
+    checked: bool  = false,
+    hovered: bool  = false,
+    label:   []const u8 = "",
+    changed: Signal(bool) = .{},
 
     pub fn deinit(self: *Checkbox, alloc: Allocator) void
     pub fn update(self: *Checkbox, dt_s: f32) void
@@ -320,9 +474,7 @@ pub const Checkbox = struct {
 };
 ```
 
-**Coordinates** are `(x, y)` integers — not a `Rect`. The hit box is a 20×20 square at `(x, y)`.
-
-`checked` is the authoritative state. After `handleEvent`, read `cb.checked` directly.
+**Coordinates** are `(x, y)` — not a `Rect`. Hit box is a 20×20 square at `(x, y)`.
 
 ---
 
@@ -330,10 +482,9 @@ pub const Checkbox = struct {
 
 ```zig
 pub const Slider = struct {
-    value:   f32 = 0.0,    // 0.0 .. 1.0
+    value:    f32  = 0.0,   // 0.0 .. 1.0
     dragging: bool = false,
-    style:   SliderStyle = .{},
-    changed: Signal(f32) = .{},
+    changed:  Signal(f32) = .{},
 
     pub fn deinit(self: *Slider, alloc: Allocator) void
     pub fn draw(self: *const Slider, r: *Renderer, rect: Rect) void
@@ -341,7 +492,107 @@ pub const Slider = struct {
 };
 ```
 
-**Coordinates** take a `Rect` (unlike Checkbox). `value` is updated in-place by drag.
+---
+
+### ProgressBar
+
+```zig
+pub const ProgressBar = struct {
+    value:  f32          = 0.0,    // 0.0 .. 1.0
+    label:  []const u8   = "",
+    color:  Color        = ACCENT,
+
+    pub fn draw(self: *const ProgressBar, r: *Renderer, rect: Rect) void
+};
+```
+
+No event handling — set `value` directly each frame.
+
+---
+
+### TabView
+
+```zig
+pub const TabView = struct {
+    tabs:         []const []const u8,   // tab labels
+    active_tab:   usize = 0,
+    tab_changed:  Signal(usize) = .{},
+
+    pub fn deinit(self: *TabView, alloc: Allocator) void
+    pub fn draw(self: *const TabView, r: *Renderer, rect: Rect, theme: Theme) void
+    pub fn handleEvent(self: *TabView, event: Event, rect: Rect) bool
+    pub fn contentRect(self: *const TabView, rect: Rect) Rect  // area below tab strip
+};
+```
+
+---
+
+### DropDown
+
+```zig
+pub const DropDown = struct {
+    items:      []const []const u8,
+    selected:   usize = 0,
+    open:       bool  = false,
+    hovered_i:  usize = 0,
+    changed:    Signal(usize) = .{},
+
+    pub fn deinit(self: *DropDown, alloc: Allocator) void
+    pub fn draw(self: *const DropDown, r: *Renderer, rect: Rect, theme: Theme) void
+    pub fn handleEvent(self: *DropDown, event: Event, rect: Rect) bool
+};
+```
+
+Keyboard: `Up`/`Down` move selection when open, `Enter` confirms, `Escape` closes.
+
+---
+
+### ScrollArea
+
+Wraps any child draw call, providing vertical/horizontal scrollbars.
+
+```zig
+pub const ScrollArea = struct {
+    scroll_x:     i32  = 0,
+    scroll_y:     i32  = 0,
+    content_w:    u32  = 0,   // set to actual content width before draw
+    content_h:    u32  = 0,   // set to actual content height before draw
+
+    pub fn draw(self: *ScrollArea, r: *Renderer, rect: Rect, theme: Theme,
+                draw_content: fn(*Renderer, Rect) void) void
+    pub fn handleEvent(self: *ScrollArea, event: Event, rect: Rect) bool
+};
+```
+
+Usage pattern:
+```zig
+scroll.content_h = total_rows * ROW_H;
+_ = scroll.handleEvent(ev, viewport_rect);
+scroll.draw(&renderer, viewport_rect, theme, struct {
+    fn f(r: *Renderer, content_rect: Rect) void {
+        // draw content offset by content_rect.x / .y
+    }
+}.f);
+```
+
+---
+
+### ListView
+
+```zig
+pub const ListView = struct {
+    items:    []const []const u8,
+    selected: usize = 0,
+    scroll_y: i32   = 0,
+    changed:  Signal(usize) = .{},
+
+    pub fn deinit(self: *ListView, alloc: Allocator) void
+    pub fn draw(self: *const ListView, r: *Renderer, rect: Rect, theme: Theme) void
+    pub fn handleEvent(self: *ListView, event: Event, rect: Rect) bool
+};
+```
+
+Keyboard: `Up`/`Down` move selection, `Enter` emits `changed`.
 
 ---
 
@@ -353,11 +604,10 @@ pub const Container = struct {
 
     pub fn draw(self: *const Container, r: *Renderer, rect: Rect, theme: Theme) void
     pub fn contentRect(self: *const Container, rect: Rect) Rect
-        // returns rect inset by border and title bar (use this for child layout)
 };
 ```
 
-No event handling — Container is a visual grouping only.
+No event handling — visual grouping only.
 
 ---
 
@@ -373,6 +623,81 @@ pub const Label = struct {
     pub fn preferredSize(self: *const Label, r: *const Renderer) Size
 };
 ```
+
+---
+
+### Dialog
+
+Modal dialog. Draws a semi-transparent scrim over the page.
+
+```zig
+pub const Dialog = struct {
+    title:   []const u8 = "Dialog",
+    message: []const u8 = "",
+    open:    bool = false,
+    ok:      Signal(void) = .{},
+    cancel:  Signal(void) = .{},
+
+    pub fn deinit(self: *Dialog, alloc: Allocator) void
+    pub fn draw(self: *const Dialog, r: *Renderer, win_rect: Rect, theme: Theme) void
+    pub fn handleEvent(self: *Dialog, event: Event, win_rect: Rect) bool
+};
+```
+
+`win_rect` is the full window rect — Dialog centers itself and draws its own scrim. `Escape` triggers cancel.
+
+---
+
+### Menu
+
+Popup context menu anchored to a button or point.
+
+```zig
+pub const MenuItem = struct {
+    label:    []const u8,
+    disabled: bool = false,
+    sep:      bool = false,   // true = draw as a separator line
+};
+
+pub const Menu = struct {
+    items:    []const MenuItem,
+    open:     bool  = false,
+    anchor:   Rect  = .{},   // set before opening (button rect)
+    hovered:  usize = 0,
+    selected: Signal(usize) = .{},
+
+    pub fn deinit(self: *Menu, alloc: Allocator) void
+    pub fn draw(self: *const Menu, r: *Renderer, theme: Theme) void
+    pub fn handleEvent(self: *Menu, event: Event) bool
+};
+```
+
+Open on button click:
+```zig
+if (btn.handleEvent(ev, btn_rect)) {
+    menu.anchor = btn_rect;
+    menu.open = true;
+}
+```
+
+---
+
+### Tooltip
+
+```zig
+pub const Tooltip = struct {
+    text:      []const u8,
+    delay_s:   f32  = 0.5,
+    hovered:   bool = false,
+    hover_t:   f32  = 0.0,   // accumulated hover time
+
+    pub fn update(self: *Tooltip, dt_s: f32) void
+    pub fn draw(self: *const Tooltip, r: *Renderer, anchor: Rect, theme: Theme) void
+    pub fn handleEvent(self: *Tooltip, event: Event, rect: Rect) void
+};
+```
+
+`draw` is a no-op until `hover_t >= delay_s`. Call `update` every frame regardless.
 
 ---
 
@@ -396,6 +721,8 @@ pub const Margin = struct { top: u32 = 0, right: u32 = 0, bottom: u32 = 0, left:
 
 `sizes` and `out` must have the same length. Items are packed from top-left with `spacing` between them.
 
+**Flex factors** (M13): Pass `Size{ .width = 0, .height = 0 }` for items that should stretch — the remaining space is divided among zero-size items equally.
+
 ### GridLayout
 
 ```zig
@@ -411,6 +738,23 @@ pub const GridLayout = struct {
 ```
 
 `out` length must equal `cols * rows`. Cells are filled left-to-right, top-to-bottom.
+
+### FlowLayout
+
+Wraps children like CSS `flex-wrap: wrap`.
+
+```zig
+pub const FlowLayout = struct {
+    gap_x:  u32 = 8,
+    gap_y:  u32 = 8,
+    padding: Margin = .{},
+
+    pub fn compute(self: FlowLayout, bounds: Rect, sizes: []const Size, out: []Rect) void
+    pub fn measure(self: FlowLayout, bounds_w: u32, sizes: []const Size) Size
+};
+```
+
+Children with `width > remaining_space` wrap to the next row.
 
 ---
 
@@ -434,7 +778,7 @@ pub fn Signal(comptime T: type) type {
 
 `T = void` for signals with no payload (Button.clicked). Emit with `signal.emit({})`.
 
-**Inline slot pattern** (avoids needing a named function):
+**Inline slot pattern**:
 ```zig
 try widget.signal.connect(alloc, &my_var,
     struct { fn f(p: *MyType, v: PayloadType) void { ... } }.f);
@@ -451,7 +795,7 @@ pub const Event = union(enum) {
     mouse_move:    MouseMoveEvent,
     key_press:     KeyEvent,
     key_release:   KeyEvent,
-    char_input:    u21,      // Unicode codepoint — use this for text input
+    char_input:    u21,      // Unicode codepoint — use for text input
     resize:        ResizeEvent,
     scroll:        ScrollEvent,
     close:         void,
@@ -460,13 +804,12 @@ pub const Event = union(enum) {
     focus_lost:    void,
 };
 
-pub const MouseEvent = struct { x: i32, y: i32, button: MouseButton, modifiers: Modifiers };
+pub const MouseEvent     = struct { x: i32, y: i32, button: MouseButton, modifiers: Modifiers };
 pub const MouseMoveEvent = struct { x: i32, y: i32, dx: i32, dy: i32, modifiers: Modifiers };
-pub const KeyEvent = struct { key: KeyCode, modifiers: Modifiers, repeat: bool };
-pub const ResizeEvent = struct { width: u32, height: u32 };
-pub const ScrollEvent = struct { x: i32, y: i32, dx: f32, dy: f32 };
-
-pub const MouseButton = enum { left, middle, right, x1, x2 };
+pub const KeyEvent       = struct { key: KeyCode, modifiers: Modifiers, repeat: bool };
+pub const ResizeEvent    = struct { width: u32, height: u32 };
+pub const ScrollEvent    = struct { x: i32, y: i32, dx: f32, dy: f32 };
+pub const MouseButton    = enum { left, middle, right, x1, x2 };
 
 pub const Modifiers = packed struct {
     shift: bool, ctrl: bool, alt: bool, super: bool, _pad: u4,
@@ -489,23 +832,105 @@ unknown
 
 ---
 
-## Tween (Animation)
+## Animation
+
+### Animated (spring/easing — M18)
+
+```zig
+pub const Easing = enum { linear, ease_out, ease_in_out, spring };
+
+pub const Animated = struct {
+    value:    f32    = 0.0,
+    target:   f32    = 0.0,
+    velocity: f32    = 0.0,     // spring only
+    duration: f32    = 0.15,    // seconds (ignored by spring)
+    elapsed:  f32    = 0.0,
+    easing:   Easing = .ease_out,
+
+    pub fn update(self: *Animated, dt_s: f32) void
+    pub fn setTarget(self: *Animated, target: f32) void
+    pub fn isSettled(self: *const Animated) bool  // true when value == target
+};
+
+pub const AnimatedColor = struct {
+    r: Animated, g: Animated, b: Animated, a: Animated,
+
+    pub fn init(color: Color) AnimatedColor
+    pub fn setTarget(self: *AnimatedColor, color: Color) void
+    pub fn update(self: *AnimatedColor, dt_s: f32) void
+    pub fn current(self: *const AnimatedColor) Color
+    pub fn isSettled(self: *const AnimatedColor) bool
+};
+```
+
+Spring parameters (critically-damped): stiffness=200, damping=2√200 ≈ 28.3. Always settles without oscillation.
+
+Usage with dirty rendering:
+```zig
+anim.setTarget(1.0);
+
+// in loop:
+anim.update(dt_s);
+if (!anim.isSettled()) redraw_cnt = @max(redraw_cnt, 1);
+```
+
+### Tween (exponential decay — legacy)
+
+Used internally by Button, Checkbox hover states. Prefer `Animated` for user-facing animations.
 
 ```zig
 pub const Tween = struct {
     value:  f32 = 0.0,
     target: f32 = 0.0,
-    speed:  f32 = 10.0,   // higher = faster (units: 1/seconds)
+    speed:  f32 = 10.0,   // higher = faster (1/seconds)
 
-    pub fn update(self: *Tween, dt_s: f32) void   // call once per frame
-    pub fn set(self: *Tween, target: f32) void     // set new target
-    pub fn snap(self: *Tween, v: f32) void         // jump immediately, no animation
+    pub fn update(self: *Tween, dt_s: f32) void   // exponential decay
+    pub fn set(self: *Tween, target: f32) void
+    pub fn snap(self: *Tween, v: f32) void         // jump immediately
 };
 ```
 
-`update` applies exponential decay: `value += (target - value) * (1 - exp(-speed * dt))`.
+---
 
-Typical speeds: `6` = slow (250ms), `10` = default (150ms), `18` = snappy (80ms).
+## Image
+
+```zig
+pub const Image = struct {
+    pixels: []u32,   // ARGB packed u32
+    width:  u32,
+    height: u32,
+
+    pub fn solid(alloc: Allocator, w: u32, h: u32, color: Color) !Image
+    pub fn fromRaw(pixels: []u32, w: u32, h: u32) Image
+    pub fn loadPng(alloc: Allocator, path: []const u8) !Image  // stub — not yet implemented
+    pub fn deinit(self: *Image, alloc: Allocator) void
+};
+```
+
+Draw with: `r.drawImage(image, dst_rect)` — nearest-neighbor scale.
+
+---
+
+## FocusManager
+
+Manages Tab-key traversal across focusable widgets. Each widget reports `isFocusable()`.
+
+```zig
+pub const FocusManager = struct {
+    focused: usize = 0,   // index into registered widget list
+
+    pub fn register(self: *FocusManager, widget: *anyopaque) void
+    pub fn handleEvent(self: *FocusManager, event: Event) void
+    pub fn isFocused(self: *const FocusManager, widget: *anyopaque) bool
+};
+```
+
+Draw the focus ring manually after the widget draw:
+```zig
+if (focus.isFocused(&my_widget)) {
+    r.fillRoundRect(Rect.init(rect.x-2, rect.y-2, rect.width+4, rect.height+4), 8, ACCENT);
+}
+```
 
 ---
 
@@ -515,13 +940,17 @@ These caused bugs in this codebase — record them here to avoid repeating them.
 
 **Signed integer division**: `i32 / comptime_int` is a compile error. Use `@divTrunc`, `@divFloor`, or `@divExact`.
 ```zig
-// WRONG:  const half = my_i32 / 2;
 const half = @divTrunc(my_i32, 2);
 ```
 
 **u32↔i32 in Rect**: `Rect.width` and `.height` are `u32`; `.x` and `.y` are `i32`. Arithmetic mixing them requires explicit casts.
 ```zig
 const right: i32 = rect.x + @as(i32, @intCast(rect.width));
+```
+
+**`@min`/`@max` on mixed types**: Returns the type of the first operand. Cast before @intCast:
+```zig
+const fill_w: u32 = @intCast(@min(computed_w, @as(i32, @intCast(max_w))));
 ```
 
 **`std.time.milliTimestamp` does not exist in 0.16**. Use Win32 `GetTickCount64`:
@@ -541,8 +970,6 @@ pub fn main(init: std.process.Init) !void {
 
 **`b.addModule` does not take `.optimize`** — optimization is determined by the artifact that imports the module.
 
-**Write tool requires a prior Read** — the file must be read before it can be edited in this session.
-
 ---
 
 ## File layout quick reference
@@ -553,37 +980,56 @@ src/
   main.zig              ← demo/gallery app
   core/
     app.zig             ← Application, deltaSeconds, capFps
-    animation.zig       ← Tween
+    animation.zig       ← Tween (legacy exponential decay)
+    animator.zig        ← Animated, AnimatedColor, Easing (spring/ease)
+    focus.zig           ← FocusManager
   widgets/
     button.zig
     label.zig
     text_field.zig
+    text_area.zig
     checkbox.zig
     slider.zig
+    progress_bar.zig
+    tab_view.zig
+    dropdown.zig
+    scroll_area.zig
+    list_view.zig
     container.zig
+    dialog.zig
+    menu.zig
+    tooltip.zig
   layout/
     geometry.zig        ← Rect, Point, Size, Margin
     box.zig             ← BoxLayout
     grid.zig            ← GridLayout
+    flow.zig            ← FlowLayout
   style/
     color.zig           ← Color
     theme.zig           ← Theme
+    style.zig           ← Style, Style.merge
+    stylesheet.zig      ← Stylesheet (.zss parser)
+    font.zig            ← Font descriptor + presets
   events/
     event.zig           ← Event, KeyCode, Modifiers
   signals/
     signal.zig          ← Signal(T)
-  platform/
-    win32/
-      window.zig        ← Win32 window, message loop
-      clipboard.zig     ← CF_UNICODETEXT get/set
-      gl_context.zig    ← WGL bootstrap for OpenGL backend
   graphics/
     renderer.zig        ← comptime backend shim
+    image.zig           ← Image type
     software/
-      renderer.zig      ← DIB pixel buffer, GDI text
-      font.zig          ← 8×8 VGA fallback font
+      renderer.zig      ← DIB pixel buffer, GDI text, setClip/clearClip
     opengl/
       renderer.zig      ← batched quad VAO/VBO
       gl.zig            ← GL function pointer table
       font_atlas.zig    ← 768×8 R8 texture
+    vulkan/
+      renderer.zig      ← Vulkan init + push-constant pipeline (SPIR-V stubs)
+  platform/
+    win32/
+      window.zig        ← Win32 window, message loop, DWM Mica title bar
+      clipboard.zig     ← CF_UNICODETEXT get/set
+      gl_context.zig    ← WGL bootstrap for OpenGL backend
+    x11/
+      window.zig        ← X11 backend (written M19, untested on Linux)
 ```
