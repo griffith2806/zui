@@ -1,17 +1,20 @@
 # Core Progress
 
-## Status: In Progress
+## Status: Complete (M11/M13)
 
 ### Done
 - Application struct (`src/core/app.zig`) — wires platform + renderer, comptime OS dispatch
+- `deltaSeconds()` using Win32 `GetTickCount64`, capped at 0.1s per frame
+- `syncSize()` — propagates resize to renderer after event loop
+- `initGdi` wired in `Application.init` for software backend (passes `dc_mem`)
+- `animation.zig` — `Tween` struct (exponential decay), `easeOut` helper
 
 ### In Progress
-- Application comptime-parametrized by backend type (currently hardcoded to win32 + software)
+_(nothing)_
 
 ### Blocked
 _(nothing)_
 
 ### Up Next
 - Refactor Application to use `Application(Platform, Renderer)` comptime pattern
-- Timer and deferred-callback primitives
 - Event loop: configurable frame-rate cap

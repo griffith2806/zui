@@ -5,7 +5,7 @@ const Rect     = @import("../layout/geometry.zig").Rect;
 const Size     = @import("../layout/geometry.zig").Size;
 const Renderer = @import("../graphics/renderer.zig").Renderer;
 const Event    = @import("../events/event.zig").Event;
-const font     = @import("../graphics/software/font.zig");
+const cb       = @import("../platform/win32/clipboard.zig");
 
 pub const TextField = struct {
     text:    std.ArrayListUnmanaged(u8) = .empty,
@@ -18,26 +18,33 @@ pub const TextField = struct {
     }
 
     pub fn draw(self: *const TextField, r: *Renderer, rect: Rect, theme: Theme) void {
-        r.fillRect(rect, theme.input_bg);
+        // Rounded background
+        r.fillRoundRect(rect, 6, theme.input_bg);
 
+        // Border — brighter when focused
         const border = if (self.focused) theme.input_border_focused else theme.input_border;
-        r.fillRect(Rect.init(rect.x,              rect.y,               rect.width, 1),           border);
-        r.fillRect(Rect.init(rect.x,              rect.bottom() - 1,    rect.width, 1),           border);
-        r.fillRect(Rect.init(rect.x,              rect.y,               1,          rect.height), border);
-        r.fillRect(Rect.init(rect.right() - 1,    rect.y,               1,          rect.height), border);
+        r.fillRoundRect(rect, 6, border);
+        r.fillRoundRect(Rect.init(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2), 5, theme.input_bg);
 
-        const tx = rect.x + 8;
-        const ty = rect.y + @as(i32, @intCast((rect.height -| font.GLYPH_H) / 2));
-        r.drawText(self.text.items, tx, ty, theme.fg);
+        const tx = rect.x + 10;
+        const ty = rect.y + @as(i32, @intCast(rect.height / 2)) - 7;
+
+        if (self.text.items.len > 0) {
+            r.drawText(self.text.items, tx, ty, theme.fg);
+        } else {
+            // Placeholder hint
+            r.drawText("Type here...", tx, ty, theme.input_hint);
+        }
 
         if (self.focused) {
-            const cx = tx + @as(i32, @intCast(self.cursor * font.GLYPH_W));
-            r.fillRect(Rect.init(cx, ty, 1, font.GLYPH_H), theme.fg);
+            // Cursor positioned by measuring text up to cursor byte offset
+            const cursor_x = tx + @as(i32, @intCast(r.textWidth(self.text.items[0..self.cursor])));
+            r.fillRect(Rect.init(cursor_x, ty, 1, 16), theme.fg);
         }
     }
 
     pub fn preferredSize(_: *const TextField) Size {
-        return .{ .width = 200, .height = font.GLYPH_H + 16 };
+        return .{ .width = 200, .height = 34 };
     }
 
     pub fn handleEvent(self: *TextField, event: Event, rect: Rect, alloc: std.mem.Allocator) bool {
@@ -67,6 +74,27 @@ pub const TextField = struct {
             },
             .key_press => |k| {
                 if (!self.focused) return false;
+
+                // Ctrl shortcuts
+                if (k.modifiers.ctrl) {
+                    switch (k.key) {
+                        .a => { self.cursor = self.text.items.len; return true; },
+                        .c => {
+                            cb.setText(self.text.items, alloc);
+                            return true;
+                        },
+                        .v => {
+                            if (cb.getText(alloc)) |pasted| {
+                                defer alloc.free(pasted);
+                                self.text.insertSlice(alloc, self.cursor, pasted) catch {};
+                                self.cursor += pasted.len;
+                            }
+                            return true;
+                        },
+                        else => {},
+                    }
+                }
+
                 switch (k.key) {
                     .backspace => {
                         if (self.cursor > 0) {
@@ -84,19 +112,11 @@ pub const TextField = struct {
                         }
                         return true;
                     },
-                    .left => {
-                        if (self.cursor > 0)
-                            self.cursor -= prevCharLen(self.text.items, self.cursor);
-                        return true;
-                    },
-                    .right => {
-                        if (self.cursor < self.text.items.len)
-                            self.cursor += nextCharLen(self.text.items, self.cursor);
-                        return true;
-                    },
-                    .home => { self.cursor = 0; return true; },
-                    .end  => { self.cursor = self.text.items.len; return true; },
-                    .escape, .tab => { self.focused = false; return true; },
+                    .left  => { if (self.cursor > 0)                    self.cursor -= prevCharLen(self.text.items, self.cursor); return true; },
+                    .right => { if (self.cursor < self.text.items.len)  self.cursor += nextCharLen(self.text.items, self.cursor); return true; },
+                    .home  => { self.cursor = 0;                         return true; },
+                    .end   => { self.cursor = self.text.items.len;       return true; },
+                    .escape, .tab => { self.focused = false;             return true; },
                     else => {},
                 }
             },

@@ -2,7 +2,6 @@ const Color    = @import("../style/color.zig").Color;
 const Rect     = @import("../layout/geometry.zig").Rect;
 const Size     = @import("../layout/geometry.zig").Size;
 const Renderer = @import("../graphics/renderer.zig").Renderer;
-const font     = @import("../graphics/software/font.zig");
 
 pub const Label = struct {
     text:  []const u8,
@@ -12,10 +11,7 @@ pub const Label = struct {
         r.drawText(self.text, rect.x, rect.y, self.color);
     }
 
-    pub fn preferredSize(self: *const Label) Size {
-        return .{
-            .width  = Renderer.textWidth(self.text),
-            .height = font.GLYPH_H,
-        };
+    pub fn preferredSize(self: *const Label, r: *const Renderer) Size {
+        return .{ .width = r.textWidth(self.text), .height = 18 };
     }
 };

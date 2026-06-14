@@ -17,4 +17,7 @@ pub const Button      = @import("widgets/button.zig").Button;
 pub const ButtonStyle = @import("widgets/button.zig").ButtonStyle;
 pub const TextField   = @import("widgets/text_field.zig").TextField;
 pub const Container   = @import("widgets/container.zig").Container;
+pub const Checkbox    = @import("widgets/checkbox.zig").Checkbox;
+pub const Slider      = @import("widgets/slider.zig").Slider;
+pub const Tween       = @import("core/animation.zig").Tween;
 pub fn Signal(comptime T: type) type { return @import("signals/signal.zig").Signal(T); }

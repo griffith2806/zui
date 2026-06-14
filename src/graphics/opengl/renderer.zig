@@ -239,7 +239,8 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn textWidth(text: []const u8) u32 {
+    pub fn textWidth(self: *const Renderer, text: []const u8) u32 {
+        _ = self;
         return @intCast(text.len * atlas.GLYPH_W);
     }
 
@@ -254,7 +255,8 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn textWidthScaled(text: []const u8, scale: u32) u32 {
+    pub fn textWidthScaled(self: *const Renderer, text: []const u8, scale: u32) u32 {
+        _ = self;
         return @intCast(text.len * atlas.GLYPH_W * scale);
     }
 

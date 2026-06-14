@@ -14,6 +14,7 @@ pub const Theme = struct {
     input_bg:             Color,
     input_border:         Color,
     input_border_focused: Color,
+    input_hint:           Color,
 
     pub const dark = Theme{
         .bg                   = Color.rgb(32,  32,  32),
@@ -29,6 +30,7 @@ pub const Theme = struct {
         .input_bg             = Color.rgb(30,  30,  30),
         .input_border         = Color.rgb(70,  70,  70),
         .input_border_focused = Color.rgb(0,  120, 212),
+        .input_hint           = Color.rgb(90,  90,  96),
     };
 
     pub const light = Theme{
@@ -45,5 +47,6 @@ pub const Theme = struct {
         .input_bg             = Color.rgb(255, 255, 255),
         .input_border         = Color.rgb(180, 180, 180),
         .input_border_focused = Color.rgb(0,  120, 212),
+        .input_hint           = Color.rgb(170, 170, 178),
     };
 };

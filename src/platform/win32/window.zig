@@ -117,6 +117,12 @@ const WM_LBUTTONDOWN: UINT = 0x0201;
 const WM_LBUTTONUP: UINT   = 0x0202;
 const WM_RBUTTONDOWN: UINT = 0x0204;
 const WM_RBUTTONUP: UINT   = 0x0205;
+const WM_MOUSEWHEEL: UINT  = 0x020A;
+
+// Virtual keys for modifier detection
+const VK_SHIFT:   INT = 0x10;
+const VK_CONTROL: INT = 0x11;
+const VK_MENU:    INT = 0x12;  // Alt
 
 // ── DWM types and constants ───────────────────────────────────────────────────
 
@@ -166,6 +172,8 @@ extern "gdi32" fn CreateDIBSection(
 ) callconv(std.builtin.CallingConvention.winapi) ?HBITMAP;
 extern "gdi32" fn SelectObject(hdc: HDC, h: *anyopaque) callconv(std.builtin.CallingConvention.winapi) ?*anyopaque;
 extern "gdi32" fn DeleteObject(ho: *anyopaque) callconv(std.builtin.CallingConvention.winapi) BOOL;
+extern "user32" fn GetKeyState(nVirtKey: INT) callconv(std.builtin.CallingConvention.winapi) i16;
+
 extern "gdi32" fn BitBlt(
     hdc: HDC, x: INT, y: INT, cx: INT, cy: INT,
     hdcSrc: HDC, x1: INT, y1: INT, rop: DWORD,
@@ -392,12 +400,16 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
         WM_RBUTTONUP   => mouseBtn(win, lp, .right, false),
         WM_KEYDOWN => {
             if (win) |w| w.pushEvent(.{ .key_press = .{
-                .key    = vkToKey(@intCast(wp)),
-                .repeat = (lp & (1 << 30)) != 0,
+                .key       = vkToKey(@intCast(wp)),
+                .repeat    = (lp & (1 << 30)) != 0,
+                .modifiers = currentModifiers(),
             }});
         },
         WM_KEYUP => {
-            if (win) |w| w.pushEvent(.{ .key_release = .{ .key = vkToKey(@intCast(wp)) } });
+            if (win) |w| w.pushEvent(.{ .key_release = .{
+                .key       = vkToKey(@intCast(wp)),
+                .modifiers = currentModifiers(),
+            }});
         },
         WM_CHAR => {
             if (win) |w| {
@@ -420,6 +432,14 @@ fn mouseBtn(win: ?*Window, lp: LPARAM, btn: event_mod.MouseButton, press: bool) 
             Event{ .mouse_release = .{ .x = x, .y = y, .button = btn } };
         w.pushEvent(ev);
     }
+}
+
+fn currentModifiers() event_mod.Modifiers {
+    return .{
+        .shift = (@as(u16, @bitCast(GetKeyState(VK_SHIFT)))   & 0x8000) != 0,
+        .ctrl  = (@as(u16, @bitCast(GetKeyState(VK_CONTROL))) & 0x8000) != 0,
+        .alt   = (@as(u16, @bitCast(GetKeyState(VK_MENU)))    & 0x8000) != 0,
+    };
 }
 
 fn vkToKey(vk: u32) event_mod.KeyCode {

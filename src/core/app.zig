@@ -1,11 +1,13 @@
-const std     = @import("std");
-const builtin = @import("builtin");
+const std          = @import("std");
+const builtin      = @import("builtin");
 const build_options = @import("build_options");
-const event_mod = @import("../events/event.zig");
+const event_mod    = @import("../events/event.zig");
+
+extern "kernel32" fn GetTickCount64() callconv(std.builtin.CallingConvention.winapi) u64;
 
 const Window = switch (builtin.os.tag) {
     .windows => @import("../platform/win32/window.zig").Window,
-    else     => @compileError("no platform backend for this OS yet — add src/platform/<os>/window.zig"),
+    else     => @compileError("no platform backend for this OS yet"),
 };
 
 const RendererMod = switch (build_options.backend) {
@@ -21,23 +23,33 @@ pub const Config = struct {
 };
 
 pub const Application = struct {
-    alloc:    std.mem.Allocator,
-    window:   *Window,
-    renderer: Renderer,
+    alloc:         std.mem.Allocator,
+    window:        *Window,
+    renderer:      Renderer,
+    last_tick_ms:  i64 = 0,
 
     pub fn init(alloc: std.mem.Allocator, config: Config) !Application {
         const win = try Window.create(alloc, config.title, config.width, config.height);
         errdefer win.deinit(alloc);
 
-        const renderer = switch (build_options.backend) {
+        var renderer = switch (build_options.backend) {
             .software => Renderer.init(win.pixels, win.width, win.height),
             .opengl   => try Renderer.init(win.hwnd, win.width, win.height),
         };
+
+        // Wire the Win32 memory DC into the software renderer for GDI text.
+        if (build_options.backend == .software) {
+            renderer.initGdi(@ptrCast(win.dc_mem));
+        }
 
         return .{ .alloc = alloc, .window = win, .renderer = renderer };
     }
 
     pub fn deinit(self: *Application) void {
+        switch (build_options.backend) {
+            .software => self.renderer.deinit(),
+            .opengl   => self.renderer.deinit(),
+        }
         self.window.deinit(self.alloc);
     }
 
@@ -45,7 +57,16 @@ pub const Application = struct {
         return self.window.pollEvent();
     }
 
-    /// Call once per frame before drawing; propagates window resize to the renderer.
+    /// Returns seconds elapsed since the previous call (capped at 0.1 s).
+    pub fn deltaSeconds(self: *Application) f32 {
+        const now: i64 = @intCast(GetTickCount64());
+        const dt: f32 = if (self.last_tick_ms == 0) 0.016
+                        else @as(f32, @floatFromInt(now - self.last_tick_ms)) / 1000.0;
+        self.last_tick_ms = now;
+        return @min(dt, 0.1);
+    }
+
+    /// Propagate a window resize to the renderer.  Call once per frame before drawing.
     pub fn syncSize(self: *Application) void {
         if (!self.window.size_changed) return;
         self.window.size_changed = false;
