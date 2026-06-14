@@ -90,24 +90,19 @@ pub const Renderer = struct {
     }
 
     pub fn clear(self: *Renderer, color: Color) void {
-        const v = toPixel(color);
-        for (0..self.width * self.height) |i| self.pixels[i] = v;
+        @memset(self.pixels[0 .. self.width * self.height], toPixel(color));
     }
 
     pub fn fillRect(self: *Renderer, rect: Rect, color: Color) void {
         const v  = toPixel(color);
-        const x0 = @max(0, rect.x);
-        const y0 = @max(0, rect.y);
-        const x1 = @min(@as(i32, @intCast(self.width)),  rect.right());
-        const y1 = @min(@as(i32, @intCast(self.height)), rect.bottom());
+        const x0: u32 = @intCast(@max(0, rect.x));
+        const y0: u32 = @intCast(@max(0, rect.y));
+        const x1: u32 = @intCast(@min(@as(i32, @intCast(self.width)),  rect.right()));
+        const y1: u32 = @intCast(@min(@as(i32, @intCast(self.height)), rect.bottom()));
         if (x0 >= x1 or y0 >= y1) return;
-        var y: i32 = y0;
+        var y: u32 = y0;
         while (y < y1) : (y += 1) {
-            const row: u32 = @as(u32, @intCast(y)) * self.width;
-            var x: i32 = x0;
-            while (x < x1) : (x += 1) {
-                self.pixels[row + @as(u32, @intCast(x))] = v;
-            }
+            @memset(self.pixels[y * self.width + x0 .. y * self.width + x1], v);
         }
     }
 
@@ -189,26 +184,63 @@ pub const Renderer = struct {
 
     pub fn fillRoundRect(self: *Renderer, rect: Rect, radius: u32, color: Color) void {
         const r: i32 = @intCast(@min(radius, @min(rect.width, rect.height) / 2));
-        const x0 = @max(0, rect.x);
-        const y0 = @max(0, rect.y);
-        const x1 = @min(@as(i32, @intCast(self.width)),  rect.right());
-        const y1 = @min(@as(i32, @intCast(self.height)), rect.bottom());
-        if (x0 >= x1 or y0 >= y1) return;
-        var py = y0;
-        while (py < y1) : (py += 1) {
-            var px = x0;
-            while (px < x1) : (px += 1) {
-                const in_left  = px < rect.x + r;
-                const in_right = px >= rect.right() - r;
-                const in_top   = py < rect.y + r;
-                const in_bot   = py >= rect.bottom() - r;
-                if ((in_left or in_right) and (in_top or in_bot)) {
-                    const cx: i32 = if (in_left) rect.x + r else rect.right() - r;
-                    const cy: i32 = if (in_top)  rect.y + r else rect.bottom() - r;
-                    const dx = px - cx; const dy = py - cy;
-                    if (dx * dx + dy * dy > r * r) continue;
+        const bx0: i32 = @max(0, rect.x);
+        const by0: i32 = @max(0, rect.y);
+        const bx1: i32 = @min(@as(i32, @intCast(self.width)),  rect.right());
+        const by1: i32 = @min(@as(i32, @intCast(self.height)), rect.bottom());
+        if (bx0 >= bx1 or by0 >= by1) return;
+
+        const v = toPixel(color);
+        const solid = color.a == 255;
+
+        var py: i32 = by0;
+        while (py < by1) : (py += 1) {
+            const in_top = py < rect.y + r;
+            const in_bot = py >= rect.bottom() - r;
+
+            if (!in_top and !in_bot) {
+                // Interior row — full span, no corner test needed
+                if (solid) {
+                    const row: u32 = @as(u32, @intCast(py)) * self.width;
+                    @memset(self.pixels[row + @as(u32, @intCast(bx0)) .. row + @as(u32, @intCast(bx1))], v);
+                } else {
+                    var px: i32 = bx0;
+                    while (px < bx1) : (px += 1)
+                        self.blendPixel(@intCast(px), @intCast(py), color);
                 }
-                self.blendPixel(@intCast(px), @intCast(py), color);
+            } else {
+                // Corner row — per-pixel test at left and right edges only
+                const cy_ctr: i32 = if (in_top) rect.y + r else rect.bottom() - r;
+                const dy = py - cy_ctr;
+                // Left corner region
+                var px: i32 = bx0;
+                while (px < @min(bx1, rect.x + r)) : (px += 1) {
+                    const cx_ctr: i32 = rect.x + r;
+                    const dx = px - cx_ctr;
+                    if (dx * dx + dy * dy > r * r) continue;
+                    self.blendPixel(@intCast(px), @intCast(py), color);
+                }
+                // Middle span (between corners), no test needed
+                const mid_start = @max(bx0, rect.x + r);
+                const mid_end   = @min(bx1, rect.right() - r);
+                if (mid_start < mid_end) {
+                    if (solid) {
+                        const row: u32 = @as(u32, @intCast(py)) * self.width;
+                        @memset(self.pixels[row + @as(u32, @intCast(mid_start)) .. row + @as(u32, @intCast(mid_end))], v);
+                    } else {
+                        var px2: i32 = mid_start;
+                        while (px2 < mid_end) : (px2 += 1)
+                            self.blendPixel(@intCast(px2), @intCast(py), color);
+                    }
+                }
+                // Right corner region
+                px = @max(bx0, rect.right() - r);
+                while (px < bx1) : (px += 1) {
+                    const cx_ctr: i32 = rect.right() - r;
+                    const dx = px - cx_ctr;
+                    if (dx * dx + dy * dy > r * r) continue;
+                    self.blendPixel(@intCast(px), @intCast(py), color);
+                }
             }
         }
     }

@@ -4,6 +4,7 @@ const build_options = @import("build_options");
 const event_mod    = @import("../events/event.zig");
 
 extern "kernel32" fn GetTickCount64() callconv(std.builtin.CallingConvention.winapi) u64;
+extern "kernel32" fn Sleep(dwMs: u32) callconv(std.builtin.CallingConvention.winapi) void;
 
 const Window = switch (builtin.os.tag) {
     .windows => @import("../platform/win32/window.zig").Window,
@@ -80,6 +81,19 @@ pub const Application = struct {
         switch (build_options.backend) {
             .software => self.window.present(),
             .opengl   => self.renderer.present(),
+        }
+    }
+
+    /// Sleep until the next frame slot to cap at `target_fps`.
+    /// Call immediately after present().  Uses the timestamp recorded by
+    /// deltaSeconds() at the start of the frame as the reference point.
+    pub fn capFps(self: *const Application, target_fps: u32) void {
+        if (target_fps == 0) return;
+        const target_ms: i64 = @intCast(1000 / target_fps);
+        const now: i64 = @intCast(GetTickCount64());
+        const elapsed = now - self.last_tick_ms;
+        if (elapsed < target_ms) {
+            Sleep(@intCast(target_ms - elapsed));
         }
     }
 };

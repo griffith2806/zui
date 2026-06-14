@@ -55,6 +55,11 @@ pub fn main(init: std.process.Init) !void {
     var counter: i32 = 0;
     var about_expanded = false;
 
+    // ── Perf tracking ─────────────────────────────────────────────────────────
+    var frame_count: u32 = 0;
+    var fps_accum:   f32 = 0;
+    var fps_display: u32 = 0;
+
     // ── Controls page widgets ─────────────────────────────────────────────────
     var field_search = zui.TextField{};
     defer field_search.deinit(alloc);
@@ -264,7 +269,22 @@ pub fn main(init: std.process.Init) !void {
 
         if (about_expanded) btn_close.draw(&app.renderer, close_rect);
 
+        // FPS counter (rolling 1-second window)
+        fps_accum  += dt_s;
+        frame_count += 1;
+        if (fps_accum >= 1.0) {
+            fps_display = frame_count;
+            frame_count = 0;
+            fps_accum  -= 1.0;
+        }
+        // Draw FPS in top-right corner of header
+        var fps_buf: [16]u8 = undefined;
+        const fps_str = std.fmt.bufPrint(&fps_buf, "{d} fps", .{fps_display}) catch "";
+        const fps_w: i32 = @intCast(app.renderer.textWidth(fps_str));
+        app.renderer.drawText(fps_str, @as(i32, @intCast(W)) - fps_w - 16, 14, FG_TER);
+
         app.present();
+        app.capFps(60);
     }
 }
 
