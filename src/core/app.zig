@@ -15,6 +15,7 @@ const Window = switch (builtin.os.tag) {
 const RendererMod = switch (build_options.backend) {
     .software => @import("../graphics/software/renderer.zig"),
     .opengl   => @import("../graphics/opengl/renderer.zig"),
+    .vulkan   => @import("../graphics/vulkan/renderer.zig"),
 };
 pub const Renderer = RendererMod.Renderer;
 
@@ -37,6 +38,7 @@ pub const Application = struct {
         var renderer = switch (build_options.backend) {
             .software => Renderer.init(win.pixels, win.width, win.height),
             .opengl   => try Renderer.init(win.hwnd, win.width, win.height),
+            .vulkan   => try Renderer.init(win.hwnd, win.width, win.height),
         };
 
         // GDI text is Win32-only; on other platforms the bitmap font fallback is used.
@@ -51,6 +53,7 @@ pub const Application = struct {
         switch (build_options.backend) {
             .software => self.renderer.deinit(),
             .opengl   => self.renderer.deinit(),
+            .vulkan   => self.renderer.deinit(),
         }
         self.window.deinit(self.alloc);
     }
@@ -75,6 +78,7 @@ pub const Application = struct {
         switch (build_options.backend) {
             .software => self.renderer.resize(self.window.pixels, self.window.width, self.window.height),
             .opengl   => self.renderer.resize(self.window.width, self.window.height),
+            .vulkan   => self.renderer.resize(self.window.width, self.window.height),
         }
     }
 
@@ -91,7 +95,8 @@ pub const Application = struct {
                     _ = self.window.present();
                 }
             },
-            .opengl => self.renderer.present(),
+            .opengl  => self.renderer.present(),
+            .vulkan  => self.renderer.present(),
         }
     }
 

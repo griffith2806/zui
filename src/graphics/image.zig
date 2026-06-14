@@ -35,6 +35,19 @@ pub const Image = struct {
         @memset(pixels, v);
         return .{ .width = width, .height = height, .pixels = pixels };
     }
+
+    /// Create a solid-color image from a packed 0xAARRGGBB value.
+    pub fn solid(alloc: std.mem.Allocator, w: u32, h: u32, color: u32) !Image {
+        const pixels = try alloc.alloc(u32, w * h);
+        @memset(pixels, color);
+        return .{ .pixels = pixels, .width = w, .height = h };
+    }
+
+    /// Wrap a caller-owned pixel buffer (no copy; caller transfers ownership).
+    /// `pixels` must be w * h elements in 0xAARRGGBB format.
+    pub fn fromRaw(pixels: []u32, w: u32, h: u32) Image {
+        return .{ .pixels = pixels, .width = w, .height = h };
+    }
 };
 
 test "Image fromColor" {
@@ -52,4 +65,24 @@ test "Image fromRgba" {
     var img = try Image.fromRgba(alloc, &data, 1, 1);
     defer img.deinit(alloc);
     try std.testing.expectEqual(@as(u32, 0xC8_0A141E), img.pixels[0]);
+}
+
+test "Image solid" {
+    const alloc = std.testing.allocator;
+    var img = try Image.solid(alloc, 3, 3, 0xFF_0000FF);
+    defer img.deinit(alloc);
+    try std.testing.expectEqual(@as(u32, 3), img.width);
+    try std.testing.expectEqual(@as(u32, 3), img.height);
+    try std.testing.expectEqual(@as(usize, 9), img.pixels.len);
+    try std.testing.expectEqual(@as(u32, 0xFF_0000FF), img.pixels[0]);
+    try std.testing.expectEqual(@as(u32, 0xFF_0000FF), img.pixels[8]);
+}
+
+test "Image fromRaw" {
+    var buf = [_]u32{ 0xFF_112233, 0xFF_445566 };
+    const img = Image.fromRaw(&buf, 2, 1);
+    try std.testing.expectEqual(@as(u32, 2), img.width);
+    try std.testing.expectEqual(@as(u32, 1), img.height);
+    try std.testing.expectEqual(@as(u32, 0xFF_112233), img.pixels[0]);
+    try std.testing.expectEqual(@as(u32, 0xFF_445566), img.pixels[1]);
 }

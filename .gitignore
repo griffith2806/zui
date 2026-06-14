@@ -1,2 +1,4 @@
 .zig-cache/
 zig-out/
+.claude/worktrees/
+build_err.txt

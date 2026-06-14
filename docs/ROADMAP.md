@@ -236,5 +236,4 @@ _Goal: cross-platform GPU rendering via Vulkan._
 - Virtual/recycled ListView for large datasets (only render visible rows)
 - Drag-and-drop (`IDropTarget` / `XdndProtocol`)
 - Rich text (`TextDocument` model — bold, links, inline images)
-- Printing / PDF export
 - IME support for CJK text input

@@ -2,6 +2,7 @@ const std = @import("std");
 const Color = @import("../../style/color.zig").Color;
 const Rect  = @import("../../layout/geometry.zig").Rect;
 const bfont = @import("font.zig");
+const Image = @import("../image.zig").Image;
 
 // ── Win32 GDI (text rendering on the memory DC) ──────────────────────────────
 
@@ -471,6 +472,11 @@ pub const Renderer = struct {
                 }
             }
         }
+    }
+
+    /// Draw a typed Image struct to the frame. Thin wrapper around drawImageRaw.
+    pub fn drawImage(self: *Renderer, img: *const Image, dst: Rect) void {
+        self.drawImageRaw(img.pixels.ptr, img.width, img.height, dst);
     }
 
     // ── Resize ────────────────────────────────────────────────────────────────

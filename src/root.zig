@@ -6,6 +6,8 @@ pub const Renderer    = app_mod.Renderer;
 pub const Color       = @import("style/color.zig").Color;
 pub const Theme       = @import("style/theme.zig").Theme;
 pub const Font        = @import("style/font.zig").Font;
+pub const Style       = @import("style/style.zig").Style;
+pub const Stylesheet  = @import("style/stylesheet.zig").Stylesheet;
 
 // Events
 pub const Event       = @import("events/event.zig").Event;
@@ -28,6 +30,9 @@ pub fn Signal(comptime T: type) type { return @import("signals/signal.zig").Sign
 // Core
 pub const Tween        = @import("core/animation.zig").Tween;
 pub const FocusManager = @import("core/focus.zig").FocusManager;
+pub const Animated      = @import("core/animator.zig").Animated;
+pub const AnimatedColor = @import("core/animator.zig").AnimatedColor;
+pub const Easing        = @import("core/animator.zig").Easing;
 
 // Graphics
 pub const Image = @import("graphics/image.zig").Image;

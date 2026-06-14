@@ -6,13 +6,13 @@ const std = @import("std");
 // for defining build steps and express dependencies between them, allowing the
 // build runner to parallelize the build automatically (and the cache system to
 // know when a step doesn't need to be re-run).
-pub const Backend = enum { software, opengl };
+pub const Backend = enum { software, opengl, vulkan };
 
 pub fn build(b: *std.Build) void {
     const target   = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const backend = b.option(Backend, "backend", "Renderer backend: software (default) or opengl") orelse .software;
+    const backend = b.option(Backend, "backend", "Renderer backend: software (default), opengl, or vulkan") orelse .software;
     const opts = b.addOptions();
     opts.addOption(Backend, "backend", backend);
     // It's also possible to define more custom flags to toggle optional features
@@ -79,6 +79,14 @@ pub fn build(b: *std.Build) void {
     // install prefix when running `zig build` (i.e. when executing the default
     // step). By default the install prefix is `zig-out/` but can be overridden
     // by passing `--prefix` or `-p`.
+    // Link system libraries required by platform backends.
+    // On Linux, the X11 backend uses Xlib and the X resource manager.
+    // In Zig 0.16, linkSystemLibrary lives on Module, not Compile.
+    if (target.result.os.tag == .linux) {
+        exe.root_module.linkSystemLibrary("X11", .{});
+        exe.root_module.link_libc = true;
+    }
+
     b.installArtifact(exe);
 
     // This creates a top level step. Top level steps have a name and can be

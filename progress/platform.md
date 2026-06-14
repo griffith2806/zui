@@ -1,20 +1,31 @@
 # Platform Progress
 
-## Status: Win32 Complete; X11 Stub (M13 + gap-close)
+## Status: Win32 Complete; X11 M19 Implementation Written (untested on Linux)
 
 ### Done
 - Win32 platform backend (`src/platform/win32/window.zig`) — fully working
   - Window creation, message loop, WndProc → zui Events
   - Mouse/keyboard/resize/close, clipboard, modifier tracking
-- X11 stub (`src/platform/x11/window.zig`) — interface mirrors Win32; methods panic at runtime
-  - File structure exists; `app.zig` comptime-dispatches to it on Linux
+  - DWM Mica client-area compositing via `DwmExtendFrameIntoClientArea({-1,-1,-1,-1})`
+    (`DWMSBT_MAINWINDOW` + `WS_EX_NOREDIRECTIONBITMAP` — Mica renders behind entire client area)
+- X11 backend (`src/platform/x11/window.zig`) — M19 full implementation written
+  - XOpenDisplay / XCreateSimpleWindow / XMapWindow
+  - Pixel buffer allocated with the Zig allocator; XImage + XPutImage for software blit
+  - XNextEvent loop: key press/release with XLookupString (char_input), mouse
+    press/release, mouse motion, scroll (Button4/Button5), resize (ConfigureNotify),
+    Expose → paint event, FocusIn/FocusOut
+  - WM_DELETE_WINDOW protocol for close-button handling
+  - dpi_scale: detected via Xft.dpi resource, falls back to 1.0
+  - Pixel buffer resized on ConfigureNotify
+  - build.zig: `exe.linkSystemLibrary("X11")` + `linkLibC()` added for Linux targets
+  - NOTE: untested on Linux — requires a Linux environment to validate
 
 ### In Progress
 _(nothing)_
 
 ### Blocked
-- X11 real implementation needs a Linux build environment
+_(nothing — implementation complete, needs Linux runtime validation)_
 
 ### Up Next
-- X11 real implementation (XOpenDisplay, XCreateWindow, XPutImage, XNextEvent)
+- Validate X11 backend on a Linux machine or CI runner
 - Cocoa backend (macOS) — not started

@@ -1,6 +1,6 @@
 # Core Progress
 
-## Status: Complete (M11/M13 + gap-close)
+## Status: Complete (M18 — Animation System)
 
 ### Done
 - Application struct (`src/core/app.zig`) — wires platform + renderer, comptime OS dispatch
@@ -9,6 +9,7 @@
 - `syncSize()` — propagates resize to renderer after event loop
 - `animation.zig` — `Tween` struct (exponential decay), `easeOut` helper
 - `focus.zig` — FocusManager: monotonic ID handles, tab/shift-tab traversal, hasFocus(id)
+- `animator.zig` — M18 Animation System: `Animated` (f32, linear/ease_out/ease_in_out/spring), `AnimatedColor`, `Easing` enum; all exported from `root.zig`
 
 ### In Progress
 _(nothing)_
