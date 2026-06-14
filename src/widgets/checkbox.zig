@@ -41,15 +41,19 @@ pub const Checkbox = struct {
         r.fillRoundRect(box, self.style.radius, self.style.border);
         r.fillRoundRect(Rect.init(x + 1, y + 1, sz - 2, sz - 2), self.style.radius, bg);
 
-        // Checkmark (drawn as two filled rects forming an L)
+        // Checkmark: diagonal 2×2 pixel steps tracing a ✓ shape
         if (self.check_t.value > 0.05) {
             const alpha: u8 = @intFromFloat(@min(255.0, self.check_t.value * 255.0));
             const fg = Color.rgba(self.style.fg.r, self.style.fg.g, self.style.fg.b, alpha);
-            const m: i32 = @intCast(sz / 2);
-            // Short arm of checkmark
-            r.fillRect(Rect.init(x + 3, y + m + 1, 5, 3), fg);
-            // Long arm of checkmark
-            r.fillRect(Rect.init(x + 6, y + m - 3, 3, 8), fg);
+            // Left arm — descends right from mid-left to bottom vertex
+            r.fillRect(Rect.init(x + 3,  y + 10, 2, 2), fg);
+            r.fillRect(Rect.init(x + 5,  y + 12, 2, 2), fg);
+            r.fillRect(Rect.init(x + 7,  y + 14, 2, 2), fg); // bottom vertex
+            // Right arm — ascends right from bottom vertex to top-right
+            r.fillRect(Rect.init(x + 9,  y + 12, 2, 2), fg);
+            r.fillRect(Rect.init(x + 11, y + 10, 2, 2), fg);
+            r.fillRect(Rect.init(x + 13, y + 8,  2, 2), fg);
+            r.fillRect(Rect.init(x + 15, y + 6,  2, 2), fg);
         }
 
         // Label
