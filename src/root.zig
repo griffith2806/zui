@@ -1,4 +1,6 @@
-pub const Application = @import("core/app.zig").Application;
+const app_mod = @import("core/app.zig");
+pub const Application = app_mod.Application;
+pub const Renderer    = app_mod.Renderer;
 pub const Color       = @import("style/color.zig").Color;
 pub const Theme       = @import("style/theme.zig").Theme;
 pub const Event       = @import("events/event.zig").Event;
@@ -15,5 +17,4 @@ pub const Button      = @import("widgets/button.zig").Button;
 pub const ButtonStyle = @import("widgets/button.zig").ButtonStyle;
 pub const TextField   = @import("widgets/text_field.zig").TextField;
 pub const Container   = @import("widgets/container.zig").Container;
-pub const Renderer    = @import("graphics/software/renderer.zig").Renderer;
 pub fn Signal(comptime T: type) type { return @import("signals/signal.zig").Signal(T); }

@@ -41,12 +41,15 @@ _Goal: consistent look, usable widget set._
 - [x] WM_CHAR → char_input event in Win32 backend
 - [x] Validated live: dark↔light toggle, typed text + live greeting, 2×2 grid cells
 
-## Milestone 4 — OpenGL Backend
+## ✅ Milestone 4 — OpenGL Backend _(complete)_
 _Goal: GPU-accelerated rendering._
 
-- [ ] OpenGL 3.3 core renderer backend
-- [ ] Font atlas (glyph rasterization → texture)
-- [ ] Batched draw calls
+- [x] WGL context creation with GL 3.3 core profile bootstrap (`src/platform/win32/gl_context.zig`)
+- [x] GL 3.3 function pointer table loaded via wglGetProcAddress (`src/graphics/opengl/gl.zig`)
+- [x] Font atlas texture 768×8 R8 from 8×8 bitmap font (`src/graphics/opengl/font_atlas.zig`)
+- [x] Batched quad renderer — solid rects + text quads, single VAO/VBO flush
+- [x] `-Dbackend=software|opengl` build option; comptime shim in `src/graphics/renderer.zig`
+- [x] Validated live: `zig build -Dbackend=opengl` renders identical dashboard via GPU
 
 ## Milestone 5 — Linux (X11) Backend
 - [ ] x11 platform backend

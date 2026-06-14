@@ -3,7 +3,7 @@ const Color    = @import("../style/color.zig").Color;
 const Theme    = @import("../style/theme.zig").Theme;
 const Rect     = @import("../layout/geometry.zig").Rect;
 const Size     = @import("../layout/geometry.zig").Size;
-const Renderer = @import("../graphics/software/renderer.zig").Renderer;
+const Renderer = @import("../graphics/renderer.zig").Renderer;
 const Event    = @import("../events/event.zig").Event;
 const font     = @import("../graphics/software/font.zig");
 

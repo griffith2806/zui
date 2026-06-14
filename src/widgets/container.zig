@@ -2,7 +2,7 @@ const Color    = @import("../style/color.zig").Color;
 const Theme    = @import("../style/theme.zig").Theme;
 const Rect     = @import("../layout/geometry.zig").Rect;
 const Size     = @import("../layout/geometry.zig").Size;
-const Renderer = @import("../graphics/software/renderer.zig").Renderer;
+const Renderer = @import("../graphics/renderer.zig").Renderer;
 
 pub const Container = struct {
     title: ?[]const u8 = null,
