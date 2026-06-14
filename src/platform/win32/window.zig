@@ -121,7 +121,6 @@ const WM_RBUTTONUP: UINT   = 0x0205;
 // ── DWM types and constants ───────────────────────────────────────────────────
 
 const HRESULT = LONG;
-const MARGINS = extern struct { cxLeftWidth: INT, cxRightWidth: INT, cyTopHeight: INT, cyBottomHeight: INT };
 
 const DWMWA_USE_IMMERSIVE_DARK_MODE:  DWORD = 20;
 const DWMWA_WINDOW_CORNER_PREFERENCE: DWORD = 33;
@@ -130,7 +129,6 @@ const DWMWCP_ROUND:       DWORD = 2;
 const DWMSBT_MAINWINDOW:  DWORD = 2;
 
 extern "dwmapi" fn DwmSetWindowAttribute(hwnd: HWND, dwAttr: DWORD, pv: *const anyopaque, cbAttr: DWORD) callconv(std.builtin.CallingConvention.winapi) HRESULT;
-extern "dwmapi" fn DwmExtendFrameIntoClientArea(hwnd: HWND, pMarInset: *const MARGINS) callconv(std.builtin.CallingConvention.winapi) HRESULT;
 
 // ── Win32 function declarations ──────────────────────────────────────────────
 
@@ -263,16 +261,16 @@ pub const Window = struct {
         _ = ShowWindow(hwnd, SW_SHOW);
         _ = UpdateWindow(hwnd);
 
-        // Windows 11 Fluent Design: dark title bar, Mica backdrop, rounded corners
+        // Windows 11 Fluent Design: dark title bar, Mica backdrop, rounded corners.
+        // Do NOT call DwmExtendFrameIntoClientArea — that creates a visible frosted
+        // glass strip. Instead keep the system title bar dark and let our painted
+        // client area sit flush below it, matching the MS Store / WPF UI style.
         const dark: DWORD = 1;
         _ = DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, @as(*const anyopaque, @ptrCast(&dark)), @sizeOf(DWORD));
         const backdrop: DWORD = DWMSBT_MAINWINDOW;
         _ = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, @as(*const anyopaque, @ptrCast(&backdrop)), @sizeOf(DWORD));
         const corners: DWORD = DWMWCP_ROUND;
         _ = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, @as(*const anyopaque, @ptrCast(&corners)), @sizeOf(DWORD));
-        // Extend 1px frame into client area to activate Mica title-bar rendering
-        const margins = MARGINS{ .cxLeftWidth = 0, .cxRightWidth = 0, .cyTopHeight = 1, .cyBottomHeight = 0 };
-        _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
 
         return win;
     }
