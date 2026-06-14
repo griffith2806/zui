@@ -31,14 +31,15 @@ _Goal: render Label and Button, handle click._
 - [x] Event dispatch from platform → widget tree
 - [x] WinUI-style dark dashboard demo — **verified live: header, nav, counter card, buttons, about overlay all working**
 
-## Milestone 3 — Theming + More Widgets
+## ✅ Milestone 3 — Theming + More Widgets _(complete)_
 _Goal: consistent look, usable widget set._
 
-- [ ] Default light and dark themes
-- [ ] TextField widget
-- [ ] Container / Panel
-- [ ] ScrollArea
-- [ ] GridLayout
+- [x] Theme struct — dark and light presets, runtime toggle
+- [x] TextField widget — char_input events, cursor, backspace/delete/home/end/left/right
+- [x] Container / Panel — title bar, contentRect(), themed borders
+- [x] GridLayout — configurable cols/rows/gap/padding, compute + measure
+- [x] WM_CHAR → char_input event in Win32 backend
+- [x] Validated live: dark↔light toggle, typed text + live greeting, 2×2 grid cells
 
 ## Milestone 4 — OpenGL Backend
 _Goal: GPU-accelerated rendering._

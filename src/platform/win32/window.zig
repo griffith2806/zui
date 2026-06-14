@@ -111,6 +111,7 @@ const WM_CLOSE: UINT       = 0x0010;
 const WM_PAINT: UINT       = 0x000F;
 const WM_KEYDOWN: UINT     = 0x0100;
 const WM_KEYUP: UINT       = 0x0101;
+const WM_CHAR: UINT        = 0x0102;
 const WM_MOUSEMOVE: UINT   = 0x0200;
 const WM_LBUTTONDOWN: UINT = 0x0201;
 const WM_LBUTTONUP: UINT   = 0x0202;
@@ -339,6 +340,12 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
         },
         WM_KEYUP => {
             if (win) |w| w.pushEvent(.{ .key_release = .{ .key = vkToKey(@intCast(wp)) } });
+        },
+        WM_CHAR => {
+            if (win) |w| {
+                const cp: u21 = @truncate(wp);
+                if (cp >= 0x20 and cp != 0x7F) w.pushEvent(.{ .char_input = cp });
+            }
         },
         else => {},
     }

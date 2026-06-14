@@ -65,6 +65,7 @@ pub const Event = union(enum) {
     mouse_move: MouseMoveEvent,
     key_press: KeyEvent,
     key_release: KeyEvent,
+    char_input: u21,
     resize: ResizeEvent,
     scroll: ScrollEvent,
     close: void,
