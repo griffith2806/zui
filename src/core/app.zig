@@ -45,6 +45,16 @@ pub const Application = struct {
         return self.window.pollEvent();
     }
 
+    /// Call once per frame before drawing; propagates window resize to the renderer.
+    pub fn syncSize(self: *Application) void {
+        if (!self.window.size_changed) return;
+        self.window.size_changed = false;
+        switch (build_options.backend) {
+            .software => self.renderer.resize(self.window.pixels, self.window.width, self.window.height),
+            .opengl   => self.renderer.resize(self.window.width, self.window.height),
+        }
+    }
+
     pub fn present(self: *Application) void {
         switch (build_options.backend) {
             .software => self.window.present(),

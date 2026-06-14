@@ -155,6 +155,8 @@ extern "user32" fn ReleaseDC(hWnd: ?HWND, hDC: HDC) callconv(std.builtin.Calling
 extern "user32" fn BeginPaint(hWnd: HWND, lpPaint: *PAINTSTRUCT) callconv(std.builtin.CallingConvention.winapi) ?HDC;
 extern "user32" fn EndPaint(hWnd: HWND, lpPaint: *const PAINTSTRUCT) callconv(std.builtin.CallingConvention.winapi) BOOL;
 extern "user32" fn AdjustWindowRect(lpRect: *RECT, dwStyle: DWORD, bMenu: BOOL) callconv(std.builtin.CallingConvention.winapi) BOOL;
+extern "user32" fn LoadCursorW(hInstance: ?HINSTANCE, lpCursorName: [*:0]const u16) callconv(std.builtin.CallingConvention.winapi) ?HCURSOR;
+const IDC_ARROW: [*:0]const u16 = @ptrFromInt(32512);
 
 extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(std.builtin.CallingConvention.winapi) ?HDC;
 extern "gdi32" fn DeleteDC(hdc: HDC) callconv(std.builtin.CallingConvention.winapi) BOOL;
@@ -182,6 +184,7 @@ pub const Window = struct {
     width:  u32,
     height: u32,
     should_close: bool = false,
+    size_changed: bool = false,
 
     ev_buf:  [MAX_EVENTS]Event = undefined,
     ev_head: u32 = 0,
@@ -198,7 +201,7 @@ pub const Window = struct {
             .cbWndExtra    = 0,
             .hInstance     = hinstance,
             .hIcon         = null,
-            .hCursor       = null,
+            .hCursor       = LoadCursorW(null, IDC_ARROW),
             .hbrBackground = null,
             .lpszMenuName  = null,
             .lpszClassName = CLASS_NAME,
@@ -275,6 +278,36 @@ pub const Window = struct {
         return win;
     }
 
+    pub fn resizeDIB(self: *Window, new_w: u32, new_h: u32) void {
+        const bmi = BITMAPINFO{
+            .bmiHeader = .{
+                .biSize          = @sizeOf(BITMAPINFOHEADER),
+                .biWidth         = @intCast(new_w),
+                .biHeight        = -@as(LONG, @intCast(new_h)),
+                .biPlanes        = 1,
+                .biBitCount      = 32,
+                .biCompression   = BI_RGB,
+                .biSizeImage     = 0,
+                .biXPelsPerMeter = 0,
+                .biYPelsPerMeter = 0,
+                .biClrUsed       = 0,
+                .biClrImportant  = 0,
+            },
+            .bmiColors = .{.{ .rgbBlue = 0, .rgbGreen = 0, .rgbRed = 0, .rgbReserved = 0 }},
+        };
+        var raw_bits: ?*anyopaque = null;
+        const new_bmp = CreateDIBSection(self.dc_mem, &bmi, DIB_RGB_COLORS, &raw_bits, null, 0) orelse return;
+        // Select new bitmap first (deselects old one) then delete old.
+        // GDI requires an object to be deselected before deletion.
+        _ = SelectObject(self.dc_mem, new_bmp);
+        _ = DeleteObject(self.bitmap);
+        self.bitmap = new_bmp;
+        self.pixels = @ptrCast(@alignCast(raw_bits.?));
+        self.width  = new_w;
+        self.height = new_h;
+        self.size_changed = true;
+    }
+
     pub fn deinit(self: *Window, alloc: std.mem.Allocator) void {
         _ = DeleteObject(self.bitmap);
         _ = DeleteDC(self.dc_mem);
@@ -327,13 +360,14 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
             return 0;
         },
         WM_SIZE => {
-            // width/height stay fixed to DIB dimensions — only push an event.
             if (win) |w| {
                 const ulp: usize = @bitCast(lp);
-                w.pushEvent(.{ .resize = .{
-                    .width  = @as(u16, @truncate(ulp & 0xFFFF)),
-                    .height = @as(u16, @truncate(ulp >> 16)),
-                }});
+                const nw: u32 = @truncate(ulp & 0xFFFF);
+                const nh: u32 = @truncate((ulp >> 16) & 0xFFFF);
+                if (nw > 0 and nh > 0 and (nw != w.width or nh != w.height)) {
+                    w.resizeDIB(nw, nh);
+                }
+                w.pushEvent(.{ .resize = .{ .width = @truncate(nw), .height = @truncate(nh) } });
             }
         },
         WM_PAINT => {

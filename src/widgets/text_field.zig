@@ -110,9 +110,9 @@ fn prevCharLen(bytes: []const u8, pos: usize) usize {
     if (pos == 0) return 0;
     var i: usize = 1;
     while (i <= pos and i <= 4) : (i += 1) {
-        if (std.unicode.utf8ByteSequenceLength(bytes[pos - i]) catch null) |_| break;
+        if (std.unicode.utf8ByteSequenceLength(bytes[pos - i]) catch null) |_| return i;
     }
-    return i - 1;
+    return 1;
 }
 
 fn nextCharLen(bytes: []const u8, pos: usize) usize {

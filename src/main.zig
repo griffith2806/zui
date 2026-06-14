@@ -23,8 +23,9 @@ const NAV_ITEM_A = zui.Color.rgb( 42,  42,  48);   // nav active bg
 
 const NAV_W: i32 = 220;
 const HDR_H: i32 = 48;
-const W: u32     = 1000;
-const H: u32     = 620;
+// W and H are updated each frame from the actual window dimensions
+var W: u32 = 1000;
+var H: u32 = 620;
 
 const Page = enum { dashboard, controls, colors, layout, about };
 
@@ -94,9 +95,12 @@ pub fn main(init: std.process.Init) !void {
     const theme_rect   = zui.Rect.init(cx,       cy + 250, 150, 34);
     const tog_a_rect   = zui.Rect.init(cx,       cy + 310, 44,  24);
     const tog_b_rect   = zui.Rect.init(cx,       cy + 350, 44,  24);
-    const close_rect   = zui.Rect.init(@as(i32,W) - 120, @as(i32,H) - 56, 100, 34);
 
     while (!app.window.should_close) {
+        app.syncSize();
+        W = app.window.width;
+        H = app.window.height;
+        var close_rect = zui.Rect.init(@as(i32, @intCast(W)) - 120, @as(i32, @intCast(H)) - 56, 100, 34);
         const theme = if (dark_mode) zui.Theme.dark else zui.Theme.light;
 
         // ── Restyle buttons from theme ────────────────────────────────────────
@@ -137,6 +141,14 @@ pub fn main(init: std.process.Init) !void {
             _ = btn_about_close.handleEvent(ev, close_rect);
         }
 
+        // Re-sync if resizeDIB ran during this frame's event processing.
+        // resizeDIB frees the old bitmap; without this second syncSize the
+        // renderer.pixels pointer would be dangling when clear() is called.
+        app.syncSize();
+        W = app.window.width;
+        H = app.window.height;
+        close_rect = zui.Rect.init(@as(i32, @intCast(W)) - 120, @as(i32, @intCast(H)) - 56, 100, 34);
+
         // ── Background ────────────────────────────────────────────────────────
         const bg = if (dark_mode) BG else zui.Color.rgb(240, 240, 245);
         app.renderer.clear(bg);
@@ -174,7 +186,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         // Version at bottom of nav
-        app.renderer.drawText("v0.5 - M9 Visual Polish", 10, @as(i32,H) - 20, FG_TER);
+        app.renderer.drawText("v0.5 - M9 Visual Polish", 10, @as(i32, @intCast(H)) - 20, FG_TER);
 
         // ════════════════════════════════════════════════════════════════════
         // CONTENT AREA — top bar
@@ -197,7 +209,7 @@ pub fn main(init: std.process.Init) !void {
 
         // Theme toggle top-right
         const theme_label = if (dark_mode) "Light" else "Dark";
-        const tl_x: i32 = @as(i32,W) - 8 * @as(i32, @intCast(theme_label.len)) - 20;
+        const tl_x: i32 = @as(i32, @intCast(W)) - 8 * @as(i32, @intCast(theme_label.len)) - 20;
         app.renderer.drawText(theme_label, tl_x, 16, FG_TER);
 
         // ════════════════════════════════════════════════════════════════════
@@ -236,7 +248,7 @@ fn drawDashboard(r: *zui.Renderer, counter: *i32, dark_mode: bool, _: zui.Theme)
     const card_y: i32 = cy + 50;
 
     // ── 3 stat cards (GridLayout 3x1) ────────────────────────────────────────
-    const grid_bounds = zui.Rect.init(cx, card_y, @as(u32,@intCast(@as(i32,W) - cx - 24)), 100);
+    const grid_bounds = zui.Rect.init(cx, card_y, @as(u32,@intCast(@as(i32, @intCast(W)) - cx - 24)), 100);
     const stat_grid = zui.GridLayout{ .cols = 3, .rows = 1, .gap = 12, .padding = 0 };
     var stat_rects: [3]zui.Rect = undefined;
     stat_grid.compute(grid_bounds, &stat_rects);
@@ -265,7 +277,7 @@ fn drawDashboard(r: *zui.Renderer, counter: *i32, dark_mode: bool, _: zui.Theme)
     r.drawTextScaled(val_str, vx, cnt_card.y + 34, ACCENT, 4);
 
     // ── Feature list card ────────────────────────────────────────────────────
-    const feat_card = zui.Rect.init(cx + 376, card_y + 116, @as(u32,@intCast(@as(i32,W) - cx - 376 - 24)), 200);
+    const feat_card = zui.Rect.init(cx + 376, card_y + 116, @as(u32,@intCast(@as(i32, @intCast(W)) - cx - 376 - 24)), 200);
     drawCard(r, feat_card, dark_mode);
     r.drawText("Completed subsystems", feat_card.x + 16, feat_card.y + 12, FG_SEC);
     r.fillRect(zui.Rect.init(feat_card.x + 16, feat_card.y + 26, feat_card.width - 32, 1), SEP);

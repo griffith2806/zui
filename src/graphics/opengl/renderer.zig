@@ -291,6 +291,12 @@ pub const Renderer = struct {
         g.uniform2f(self.u_screen, @floatFromInt(self.width), @floatFromInt(self.height));
     }
 
+    pub fn resize(self: *Renderer, w: u32, h: u32) void {
+        self.width  = w;
+        self.height = h;
+        gl.viewport(0, 0, @intCast(w), @intCast(h));
+    }
+
     pub fn present(self: *Renderer) void {
         self.flush();
         self.ctx.swapBuffers();

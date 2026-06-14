@@ -100,6 +100,12 @@ pub const Renderer = struct {
         }
     }
 
+    pub fn resize(self: *Renderer, pixels: [*]u32, w: u32, h: u32) void {
+        self.pixels = pixels;
+        self.width  = w;
+        self.height = h;
+    }
+
     pub fn textWidthScaled(text: []const u8, scale: u32) u32 {
         return @intCast(text.len * font.GLYPH_W * scale);
     }

@@ -1,6 +1,7 @@
 # zui Roadmap
 
 ## ✅ Milestone 0 — Foundations _(complete)_
+
 _Goal: compiling skeleton with subsystem stubs and CI passing._
 
 - [x] Directory structure and build.zig wired up
@@ -13,6 +14,7 @@ _Goal: compiling skeleton with subsystem stubs and CI passing._
 - [x] Renderer interface defined (software backend)
 
 ## ✅ Milestone 1 — Hello World Window _(complete)_
+
 _Goal: open a window and paint a solid color._
 
 - [x] win32 platform backend: create window, message loop
@@ -21,6 +23,7 @@ _Goal: open a window and paint a solid color._
 - [x] `zig build run` shows a window — **verified live, dark-blue background, Escape closes**
 
 ## ✅ Milestone 2 — Basic Widgets _(complete)_
+
 _Goal: render Label and Button, handle click._
 
 - [x] Widget base trait
@@ -32,6 +35,7 @@ _Goal: render Label and Button, handle click._
 - [x] WinUI-style dark dashboard demo — **verified live: header, nav, counter card, buttons, about overlay all working**
 
 ## ✅ Milestone 3 — Theming + More Widgets _(complete)_
+
 _Goal: consistent look, usable widget set._
 
 - [x] Theme struct — dark and light presets, runtime toggle
@@ -42,6 +46,7 @@ _Goal: consistent look, usable widget set._
 - [x] Validated live: dark↔light toggle, typed text + live greeting, 2×2 grid cells
 
 ## ✅ Milestone 4 — OpenGL Backend _(complete)_
+
 _Goal: GPU-accelerated rendering._
 
 - [x] WGL context creation with GL 3.3 core profile bootstrap (`src/platform/win32/gl_context.zig`)
@@ -52,15 +57,19 @@ _Goal: GPU-accelerated rendering._
 - [x] Validated live: `zig build -Dbackend=opengl` renders identical dashboard via GPU
 
 ## Milestone 5 — Linux (X11) Backend
+
 - [ ] x11 platform backend
 
 ## Milestone 6 — macOS (Cocoa) Backend
+
 - [ ] cocoa platform backend (Objective-C interop via `@cImport`)
 
 ## Milestone 7 — Vulkan Backend
+
 - [ ] Vulkan renderer backend
 
 ## ✅ Milestone 8 — Showcase Demo _(complete)_
+
 _Goal: a single polished app that exercises every completed subsystem — the zui equivalent of a component gallery._
 
 - [x] WPF UI–style sidebar navigation (5 pages, active indicator, accent icon)
@@ -74,6 +83,7 @@ _Goal: a single polished app that exercises every completed subsystem — the zu
 - [x] Validated live: all 5 pages navigate correctly, all widgets interactive
 
 ## ✅ Milestone 9 — Fluent Visual Polish _(complete)_
+
 _Goal: Mica/Acrylic DWM backdrop, rounded corners, alpha blending — closing the gap with WPF UI._
 
 - [x] Dark title bar + Mica backdrop via `DwmSetWindowAttribute` (Win32) — title bar has frosted glass blur
@@ -86,10 +96,7 @@ _Goal: Mica/Acrylic DWM backdrop, rounded corners, alpha blending — closing th
 - [x] Validated live: both software and OpenGL backends render rounded cards correctly
 
 ## Backlog
-- Accessibility (a11y) tree
-- Drag and drop
-- IME / international input
+
 - Animation system (hover fade ~150ms ease-out, page transitions)
 - Mica client-area compositing (requires DirectComposition or UpdateLayeredWindow)
 - CSS-like style sheets
-- Hot-reload for styles
