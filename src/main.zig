@@ -22,7 +22,7 @@ var W: u32 = 1060;
 var H: u32 = 680;
 
 // ── Navigation ───────────────────────────────────────────────────────────────
-const Page = enum { dashboard, controls, inputs, overlays, colors, layout, about };
+const Page = enum { dashboard, controls, inputs, overlays, colors, layout, animations, about };
 
 const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
     .{ .label = "Dashboard", .page = .dashboard, .icon = "D" },
@@ -30,8 +30,26 @@ const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
     .{ .label = "Inputs",    .page = .inputs,    .icon = "I" },
     .{ .label = "Overlays",  .page = .overlays,  .icon = "O" },
     .{ .label = "Colors",    .page = .colors,    .icon = "P" },
-    .{ .label = "Layout",    .page = .layout,    .icon = "L" },
-    .{ .label = "About",     .page = .about,     .icon = "A" },
+    .{ .label = "Layout",     .page = .layout,     .icon = "L" },
+    .{ .label = "Animations", .page = .animations, .icon = "M" },
+    .{ .label = "About",      .page = .about,      .icon = "A" },
+};
+
+// ── Animation demo data ──────────────────────────────────────────────────────
+const ANIM_COLORS = [_]zui.Color{
+    ACCENT,
+    zui.Color.rgb( 16, 124,  16),
+    zui.Color.rgb(196,  43,  28),
+    zui.Color.rgb(136,  23, 152),
+    zui.Color.rgb(200, 140,   0),
+    zui.Color.rgb(  0, 153, 153),
+};
+const EASE_NAMES  = [4][]const u8{ "linear", "ease out", "ease in-out", "spring" };
+const EASE_COLORS = [4]zui.Color{
+    zui.Color.rgb(200, 140,  0),
+    ACCENT,
+    zui.Color.rgb( 16, 124, 16),
+    zui.Color.rgb(196,  43, 28),
 };
 
 // ── Shared sample data ────────────────────────────────────────────────────────
@@ -369,6 +387,161 @@ const OverlaysState = struct {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// PAGE STATE: Animations
+// ══════════════════════════════════════════════════════════════════════════════
+const AnimationsState = struct {
+    ease_vals: [4]zui.Animated = .{
+        .{ .value = 0, .target = 0, .easing = .linear,      .duration = 0.5 },
+        .{ .value = 0, .target = 0, .easing = .ease_out                      },
+        .{ .value = 0, .target = 0, .easing = .ease_in_out                   },
+        .{ .value = 0, .target = 0, .easing = .spring                        },
+    },
+    btn_play:   zui.Button        = .{ .label = "Play" },
+    btn_rev:    zui.Button        = .{ .label = "Reverse" },
+    color_anim: zui.AnimatedColor = undefined,
+    color_idx:  usize             = 0,
+    btn_color:  zui.Button        = .{ .label = "Next Color" },
+    ball_x:     zui.Animated      = .{ .value = 140, .target = 140, .easing = .spring },
+    ball_y:     zui.Animated      = .{ .value = 100, .target = 100, .easing = .spring },
+
+    pub fn init(self: *AnimationsState) void {
+        self.color_anim = zui.AnimatedColor.init(ANIM_COLORS[0]);
+    }
+
+    pub fn deinit(self: *AnimationsState, alloc: std.mem.Allocator) void {
+        self.btn_play.deinit(alloc);
+        self.btn_rev.deinit(alloc);
+        self.btn_color.deinit(alloc);
+    }
+
+    pub fn handleEvent(self: *AnimationsState, ev: zui.Event) void {
+        const lx = cx(); const base = cy();
+        const rx: i32   = lx + 420;
+        const area_top  = base + 40;
+        const ball_area = zui.Rect.init(rx, area_top, 320, 260);
+
+        if (self.btn_play.handleEvent(ev, zui.Rect.init(lx, base + 20, 100, 30))) {
+            if (!self.btn_play.pressed) {
+                for (0..4) |i| {
+                    self.ease_vals[i].value    = 0;
+                    self.ease_vals[i].velocity = 0;
+                    self.ease_vals[i].elapsed  = 0;
+                    self.ease_vals[i].target   = 1.0;
+                }
+            }
+        }
+        if (self.btn_rev.handleEvent(ev, zui.Rect.init(lx + 110, base + 20, 110, 30))) {
+            if (!self.btn_rev.pressed) {
+                for (0..4) |i| {
+                    self.ease_vals[i].value    = 1;
+                    self.ease_vals[i].velocity = 0;
+                    self.ease_vals[i].elapsed  = 0;
+                    self.ease_vals[i].target   = 0.0;
+                }
+            }
+        }
+        if (self.btn_color.handleEvent(ev, zui.Rect.init(lx + 220, base + 285, 120, 34))) {
+            if (!self.btn_color.pressed) {
+                self.color_idx = (self.color_idx + 1) % ANIM_COLORS.len;
+                self.color_anim.setTarget(ANIM_COLORS[self.color_idx]);
+            }
+        }
+        switch (ev) {
+            .mouse_press => |m| {
+                if (m.button == .left and ball_area.contains(.{ .x = m.x, .y = m.y })) {
+                    self.ball_x.setTarget(std.math.clamp(
+                        @as(f32, @floatFromInt(m.x - rx)), 16, 304));
+                    self.ball_y.setTarget(std.math.clamp(
+                        @as(f32, @floatFromInt(m.y - area_top)), 16, 244));
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub fn update(self: *AnimationsState, dt_s: f32) void {
+        for (&self.ease_vals) |*v| _ = v.update(dt_s);
+        _ = self.color_anim.update(dt_s);
+        _ = self.ball_x.update(dt_s);
+        _ = self.ball_y.update(dt_s);
+        self.btn_play.update(dt_s);
+        self.btn_rev.update(dt_s);
+        self.btn_color.update(dt_s);
+        self.btn_play.style  = .{ .bg = ACCENT, .bg_hover = ACCENT_HV, .bg_press = ACCENT_PR, .fg = FG };
+        self.btn_rev.style   = .{ .bg = ACCENT, .bg_hover = ACCENT_HV, .bg_press = ACCENT_PR, .fg = FG };
+        self.btn_color.style = .{ .bg = ACCENT, .bg_hover = ACCENT_HV, .bg_press = ACCENT_PR, .fg = FG };
+    }
+
+    pub fn draw(self: *AnimationsState, r: *zui.Renderer, dark_mode: bool) void {
+        const lx = cx(); const base = cy(); const ly = HDR_H + 16;
+        const rx: i32  = lx + 420;
+        const area_top = base + 40;
+
+        r.drawTextScaled("Animations", lx, ly, if (dark_mode) FG else zui.Color.rgb(20, 20, 20), 2);
+        r.drawText("Spring, ease-out, and color transition demos", lx, ly + 30, FG_SEC);
+
+        // ── Easing curves ────────────────────────────────────────────────────
+        sectionLabel(r, lx, base, "Easing curves");
+        self.btn_play.draw(r, zui.Rect.init(lx, base + 20, 100, 30));
+        self.btn_rev.draw(r, zui.Rect.init(lx + 110, base + 20, 110, 30));
+
+        const track_x: i32 = lx + 110;
+        const track_w: i32 = 260;
+        const ball_r:  i32 = 9;
+
+        for (0..4) |i| {
+            const ty: i32 = base + 64 + @as(i32, @intCast(i)) * 50;
+            const v = std.math.clamp(self.ease_vals[i].value, -0.1, 1.1);
+            const bx: i32 = track_x + @as(i32, @intFromFloat(v * @as(f32, @floatFromInt(track_w))));
+
+            r.drawText(EASE_NAMES[i], lx, ty + 4, FG_SEC);
+            r.fillRoundRect(zui.Rect.init(track_x, ty + 4, track_w, ball_r * 2), ball_r, SEP);
+            const fill_w = bx - track_x;
+            if (fill_w > 0)
+                r.fillRoundRect(
+                    zui.Rect.init(track_x, ty + 4, @intCast(@min(fill_w, track_w)), @intCast(ball_r * 2)),
+                    ball_r, EASE_COLORS[i].lerp(SEP, 0.5),
+                );
+            r.fillRoundRect(
+                zui.Rect.init(bx - ball_r, ty + 4, ball_r * 2, ball_r * 2),
+                ball_r, EASE_COLORS[i],
+            );
+        }
+
+        // ── Animated color ───────────────────────────────────────────────────
+        sectionLabel(r, lx, base + 268, "Animated color");
+        const swatch = zui.Rect.init(lx, base + 288, 200, 68);
+        r.fillRoundRect(swatch, 10, SEP);
+        r.fillRoundRect(
+            zui.Rect.init(swatch.x + 1, swatch.y + 1, swatch.width - 2, swatch.height - 2),
+            9, self.color_anim.current(),
+        );
+        self.btn_color.draw(r, zui.Rect.init(lx + 220, base + 304, 120, 34));
+        r.drawText("ease_out per channel", lx, base + 366, FG_TER);
+
+        // ── Spring ball ──────────────────────────────────────────────────────
+        sectionLabel(r, rx, base, "Spring ball");
+        r.drawText("Click anywhere in this area", rx, base + 20, FG_TER);
+
+        const ball_area = zui.Rect.init(rx, area_top, 320, 260);
+        drawCard(r, ball_area, dark_mode);
+
+        const bx: i32 = rx       + @as(i32, @intFromFloat(self.ball_x.value));
+        const by: i32 = area_top + @as(i32, @intFromFloat(self.ball_y.value));
+        const br: i32 = 16;
+        r.fillRoundRect(
+            zui.Rect.init(bx - br + 3, by - br + 5, br * 2, br * 2),
+            br, zui.Color.rgba(0, 0, 0, 60),
+        );
+        r.fillRoundRect(zui.Rect.init(bx - br, by - br, br * 2, br * 2), br, ACCENT);
+        r.fillRoundRect(
+            zui.Rect.init(bx - br / 2, by - br + 4, br / 2 + 2, br / 3),
+            4, zui.Color.rgba(255, 255, 255, 100),
+        );
+    }
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MAIN LOOP
 // ══════════════════════════════════════════════════════════════════════════════
 pub fn main(init: std.process.Init) !void {
@@ -395,6 +568,10 @@ pub fn main(init: std.process.Init) !void {
     var overlays = OverlaysState.initDefault();
     try overlays.initSignals(alloc);
     defer overlays.deinit(alloc);
+
+    var animations = AnimationsState{};
+    animations.init();
+    defer animations.deinit(alloc);
 
     var nav_rects: [NAV_ITEMS.len]zui.Rect = undefined;
     for (0..NAV_ITEMS.len) |i|
@@ -426,10 +603,11 @@ pub fn main(init: std.process.Init) !void {
                 else => {},
             }
             switch (page) {
-                .controls => controls.handleEvent(ev, alloc),
-                .inputs   => inputs.handleEvent(ev, alloc),
-                .overlays => overlays.handleEvent(ev, win_rect),
-                .about    => switch (ev) {
+                .controls   => controls.handleEvent(ev, alloc),
+                .inputs     => inputs.handleEvent(ev, alloc),
+                .overlays   => overlays.handleEvent(ev, win_rect),
+                .animations => animations.handleEvent(ev),
+                .about      => switch (ev) {
                     .mouse_press => |m| {
                         const exp_y: i32 = HDR_H + 16 + 144 + 9 * 22 + 16;
                         if (m.button == .left and
@@ -448,6 +626,7 @@ pub fn main(init: std.process.Init) !void {
         const theme = if (dark_mode) zui.Theme.dark else zui.Theme.light;
         controls.update(dt_s, theme);
         overlays.update(dt_s);
+        if (page == .animations) animations.update(dt_s);
         for (0..NAV_ITEMS.len) |i| {
             nav_hover_t[i] += (@as(f32, if (nav_hovered[i]) 1.0 else 0.0) - nav_hover_t[i]) *
                               (1.0 - @exp(-10.0 * dt_s));
@@ -463,9 +642,10 @@ pub fn main(init: std.process.Init) !void {
             .controls  => controls.draw(&app.renderer, dark_mode, theme),
             .inputs    => inputs.draw(&app.renderer, dark_mode),
             .overlays  => overlays.draw(&app.renderer, dark_mode, zui.Rect.init(0, 0, W, H)),
-            .colors    => drawColors(&app.renderer, dark_mode),
-            .layout    => drawLayout(&app.renderer, dark_mode, theme),
-            .about     => drawAbout(&app.renderer, about_expanded, dark_mode),
+            .colors     => drawColors(&app.renderer, dark_mode),
+            .layout     => drawLayout(&app.renderer, dark_mode, theme),
+            .animations => animations.draw(&app.renderer, dark_mode),
+            .about      => drawAbout(&app.renderer, about_expanded, dark_mode),
         }
 
         app.present();
@@ -523,9 +703,10 @@ fn drawHeader(r: *zui.Renderer, page: Page, dark_mode: bool) void {
     r.fillRect(zui.Rect.init(NAV_W, HDR_H, content_w, 1), SEP);
 
     const page_name = switch (page) {
-        .dashboard => "Dashboard", .controls => "Controls", .inputs => "Inputs",
-        .overlays  => "Overlays",  .colors   => "Colors",   .layout => "Layout",
-        .about     => "About",
+        .dashboard  => "Dashboard", .controls => "Controls", .inputs => "Inputs",
+        .overlays   => "Overlays",  .colors   => "Colors",   .layout => "Layout",
+        .animations => "Animations",
+        .about      => "About",
     };
     const bx = NAV_W + 20;
     const gw: i32 = @intCast(r.textWidth("zui Gallery"));
