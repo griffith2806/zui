@@ -1,10 +1,11 @@
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
-const Signal   = @import("../signals/signal.zig").Signal;
-const Tween    = @import("../core/animation.zig").Tween;
-const std      = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const Signal     = @import("../signals/signal.zig").Signal;
+const Tween      = @import("../core/animation.zig").Tween;
+const std        = @import("std");
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const CheckboxStyle = struct {
     size:       u32   = 20,
@@ -60,6 +61,18 @@ pub const Checkbox = struct {
         if (self.label.len > 0) {
             r.drawText(self.label, x + @as(i32, @intCast(sz)) + 10, y + 2, Color.rgb(200, 200, 205));
         }
+    }
+
+    pub fn accessNode(self: *const Checkbox, x: i32, y: i32, focused: bool) AccessNode {
+        const sz: u32 = self.style.size;
+        const lw: u32 = if (self.label.len > 0) @as(u32, @intCast(self.label.len)) * 8 + 10 else 0;
+        return .{
+            .role   = .checkbox,
+            .name   = self.label,
+            .value  = if (self.checked) "checked" else "unchecked",
+            .bounds = Rect.init(x, y, sz + lw, sz),
+            .state  = .{ .focused = focused, .checked = self.checked },
+        };
     }
 
     pub fn handleEvent(self: *Checkbox, event: Event, x: i32, y: i32) bool {

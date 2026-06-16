@@ -6,6 +6,7 @@ const Renderer = @import("../graphics/renderer.zig").Renderer;
 const Event    = @import("../events/event.zig").Event;
 const Signal   = @import("../signals/signal.zig").Signal;
 const Tween    = @import("../core/animation.zig").Tween;
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const ButtonStyle = struct {
     bg:       Color = Color.rgb(45, 45, 48),
@@ -59,6 +60,15 @@ pub const Button = struct {
         return .{
             .width  = r.textWidth(self.label) + self.style.pad_x * 2,
             .height = 34,
+        };
+    }
+
+    pub fn accessNode(self: *const Button, rect: Rect, focused: bool) AccessNode {
+        return .{
+            .role   = .button,
+            .name   = self.label,
+            .bounds = rect,
+            .state  = .{ .focused = focused, .enabled = true },
         };
     }
 

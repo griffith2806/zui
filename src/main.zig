@@ -555,6 +555,10 @@ pub fn main(init: std.process.Init) !void {
     });
     defer app.deinit();
 
+    // Initialise Windows UI Automation so screen readers can inspect the UI.
+    try app.initUia("zui Component Gallery");
+    defer app.deinitUia();
+
     var page: Page     = .dashboard;
     var dark_mode      = true;
     var about_expanded = false;
@@ -670,9 +674,65 @@ pub fn main(init: std.process.Init) !void {
             }
 
             app.present();
+
+            // Publish current widget positions to UIA / screen readers.
+            buildAccessibilityTree(&app, page, &controls, &inputs, &nav_rects);
         }
         app.capFps(60);
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ACCESSIBILITY TREE
+// ══════════════════════════════════════════════════════════════════════════════
+
+fn buildAccessibilityTree(
+    app:       *zui.Application,
+    page:      Page,
+    controls:  *const ControlsState,
+    inputs:    *const InputsState,
+    nav_rects: []const zui.Rect,
+) void {
+    var nodes: [96]zui.AccessNode = undefined;
+    var n: usize = 0;
+
+    // Navigation sidebar items (always present)
+    for (NAV_ITEMS, 0..) |item, i| {
+        if (n >= nodes.len) break;
+        nodes[n] = .{
+            .role   = .button,
+            .name   = item.label,
+            .bounds = nav_rects[i],
+            .state  = .{ .selected = item.page == page, .enabled = true },
+        };
+        n += 1;
+    }
+
+    const lx = cx();
+    const base = cy();
+    const rx: i32 = lx + 420;
+
+    switch (page) {
+        .controls => {
+            if (n < nodes.len) { nodes[n] = controls.field_search.accessNode("Search", zui.Rect.init(lx, base + 40, 300, 34)); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.field_name.accessNode("Name", zui.Rect.init(lx, base + 100, 280, 34)); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.btn_inc.accessNode(zui.Rect.init(lx, base + 170, 130, 34), false); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.btn_reset.accessNode(zui.Rect.init(lx + 140, base + 170, 100, 34), false); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.btn_theme.accessNode(zui.Rect.init(lx, base + 214, 160, 34), false); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.slider_vol.accessNode(zui.Rect.init(lx, base + 278, 300, 30), false); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.cb_notify.accessNode(lx, base + 328, false); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.cb_compact.accessNode(lx, base + 363, false); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.tabs.accessNode(zui.Rect.init(rx, base + 20, 340, 40)); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.pb.accessNode(zui.Rect.init(rx, base + 142, 320, 8)); n += 1; }
+        },
+        .inputs => {
+            if (n < nodes.len) { nodes[n] = inputs.list_view.accessNode(zui.Rect.init(lx + 380, base + 40, 260, 180), false); n += 1; }
+            if (n < nodes.len) { nodes[n] = inputs.dropdown.accessNode(zui.Rect.init(lx + 380, base + 278, 260, 36), false); n += 1; }
+        },
+        else => {},
+    }
+
+    app.updateAccessibility(nodes[0..n]);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

@@ -1,10 +1,11 @@
-const std      = @import("std");
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Size     = @import("../layout/geometry.zig").Size;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
-const Signal   = @import("../signals/signal.zig").Signal;
+const std        = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Size       = @import("../layout/geometry.zig").Size;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const Signal     = @import("../signals/signal.zig").Signal;
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const TabView = struct {
     tabs:        []const []const u8,
@@ -19,6 +20,11 @@ pub const TabView = struct {
 
     pub fn deinit(self: *TabView, alloc: std.mem.Allocator) void {
         self.changed.deinit(alloc);
+    }
+
+    pub fn accessNode(self: *const TabView, rect: Rect) AccessNode {
+        const name = if (self.active < self.tabs.len) self.tabs[self.active] else "Tab";
+        return .{ .role = .tab, .name = name, .bounds = rect };
     }
 
     pub fn draw(self: *const TabView, r: *Renderer, rect: Rect) void {

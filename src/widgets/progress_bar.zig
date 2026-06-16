@@ -1,10 +1,11 @@
-const std      = @import("std");
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Size     = @import("../layout/geometry.zig").Size;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
-const Tween    = @import("../core/animation.zig").Tween;
+const std        = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Size       = @import("../layout/geometry.zig").Size;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const Tween      = @import("../core/animation.zig").Tween;
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const ProgressBar = struct {
     value:       f32   = 0.0,
@@ -22,6 +23,11 @@ pub const ProgressBar = struct {
     pub fn update(self: *ProgressBar, dt_s: f32) void {
         self.display_t.update(dt_s);
     }
+
+    pub fn accessNode(_: *const ProgressBar, rect: Rect) AccessNode {
+        return .{ .role = .progress_bar, .name = "Progress", .bounds = rect };
+    }
+    // Note: live percentage value would dangle if stored from a stack buffer; omit here.
 
     pub fn draw(self: *const ProgressBar, r: *Renderer, rect: Rect) void {
         r.fillRoundRect(rect, self.radius, self.track_color);

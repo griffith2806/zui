@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const event_mod = @import("../../events/event.zig");
+const uia_mod  = @import("uia.zig");
+const node_mod = @import("../../accessibility/node.zig");
 
 comptime {
     if (builtin.os.tag != .windows) @compileError("win32 platform backend is Windows-only");
@@ -105,6 +107,7 @@ const GWLP_USERDATA: INT = -21;
 const BI_RGB: DWORD = 0;
 const DIB_RGB_COLORS: UINT = 0;
 const SRCCOPY: DWORD = 0x00CC0020;
+const WM_GETOBJECT: UINT   = 0x003D;
 const WM_DESTROY: UINT     = 0x0002;
 const WM_SIZE: UINT        = 0x0005;
 const WM_CLOSE: UINT       = 0x0010;
@@ -203,6 +206,7 @@ pub const Window = struct {
     dpi_scale: f32,   // e.g. 2.0 on a 200% DPI display
     should_close: bool = false,
     size_changed: bool = false,
+    uia_tree:     ?*uia_mod.UiaTree = null,
 
     ev_buf:  [MAX_EVENTS]Event = undefined,
     ev_head: u32 = 0,
@@ -349,6 +353,19 @@ pub const Window = struct {
         self.size_changed = true;
     }
 
+    pub fn initUia(self: *Window, alloc: std.mem.Allocator, title: []const u8) !void {
+        uia_mod.loadUiaFunctions();
+        self.uia_tree = try uia_mod.UiaTree.create(alloc, @ptrCast(self.hwnd), self.dpi_scale, title);
+    }
+
+    pub fn deinitUia(self: *Window) void {
+        if (self.uia_tree) |tree| { tree.destroy(); self.uia_tree = null; }
+    }
+
+    pub fn updateAccessibility(self: *Window, nodes: []const node_mod.AccessNode) void {
+        if (self.uia_tree) |tree| tree.update(nodes);
+    }
+
     pub fn deinit(self: *Window, alloc: std.mem.Allocator) void {
         _ = DeleteObject(self.bitmap);
         _ = DeleteDC(self.dc_mem);
@@ -403,6 +420,15 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
     const win: ?*Window = if (raw != 0) @ptrFromInt(@as(usize, @bitCast(raw))) else null;
 
     switch (msg) {
+        WM_GETOBJECT => {
+            if (win) |w| {
+                if (w.uia_tree) |tree| {
+                    const result = uia_mod.handleGetObject(tree, @ptrCast(hwnd), wp, lp);
+                    if (result != 0) return result;
+                }
+            }
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        },
         WM_CLOSE => {
             if (win) |w| { w.should_close = true; w.pushEvent(.close); }
             return 0;

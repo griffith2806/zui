@@ -1,10 +1,11 @@
-const std      = @import("std");
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Point    = @import("../layout/geometry.zig").Point;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
-const Signal   = @import("../signals/signal.zig").Signal;
+const std        = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Point      = @import("../layout/geometry.zig").Point;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const Signal     = @import("../signals/signal.zig").Signal;
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const DropDown = struct {
     items:    []const []const u8,
@@ -25,6 +26,16 @@ pub const DropDown = struct {
 
     pub fn deinit(self: *DropDown, alloc: std.mem.Allocator) void {
         self.changed.deinit(alloc);
+    }
+
+    pub fn accessNode(self: *const DropDown, rect: Rect, focused: bool) AccessNode {
+        const name = if (self.selected < self.items.len) self.items[self.selected] else "Dropdown";
+        return .{
+            .role  = .combo_box,
+            .name  = name,
+            .bounds = rect,
+            .state = .{ .focused = focused, .expanded = self.open },
+        };
     }
 
     pub fn draw(self: *const DropDown, r: *Renderer, rect: Rect) void {

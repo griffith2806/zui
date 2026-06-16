@@ -1,9 +1,10 @@
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
-const Signal   = @import("../signals/signal.zig").Signal;
-const std      = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const Signal     = @import("../signals/signal.zig").Signal;
+const std        = @import("std");
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const SliderStyle = struct {
     track_h:     u32   = 2,
@@ -51,6 +52,16 @@ pub const Slider = struct {
         r.fillRoundRect(Rect.init(thumb_x, thumb_y, tw, tth), tw / 2, Color.rgb(80, 80, 90));
         r.fillRoundRect(Rect.init(thumb_x + 1, thumb_y + 1, tw - 2, tth - 2), (tw - 2) / 2, thumb_color);
     }
+
+    pub fn accessNode(_: *const Slider, rect: Rect, focused: bool) AccessNode {
+        return .{
+            .role   = .slider,
+            .name   = "Slider",
+            .bounds = rect,
+            .state  = .{ .focused = focused },
+        };
+    }
+    // Note: value string omitted — live percentage would require caller-supplied buffer.
 
     pub fn handleEvent(self: *Slider, event: Event, rect: Rect) bool {
         switch (event) {

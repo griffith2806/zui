@@ -2,6 +2,12 @@ const app_mod = @import("core/app.zig");
 pub const Application = app_mod.Application;
 pub const Renderer    = app_mod.Renderer;
 
+// Accessibility
+const node_mod    = @import("accessibility/node.zig");
+pub const AccessNode = node_mod.AccessNode;
+pub const Role       = node_mod.Role;
+pub const State      = node_mod.State;
+
 // Style
 pub const Color       = @import("style/color.zig").Color;
 pub const Theme       = @import("style/theme.zig").Theme;

@@ -1,7 +1,8 @@
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Size     = @import("../layout/geometry.zig").Size;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Size       = @import("../layout/geometry.zig").Size;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const Label = struct {
     text:  []const u8,
@@ -9,6 +10,10 @@ pub const Label = struct {
 
     pub fn draw(self: *const Label, r: *Renderer, rect: Rect) void {
         r.drawText(self.text, rect.x, rect.y, self.color);
+    }
+
+    pub fn accessNode(self: *const Label, rect: Rect) AccessNode {
+        return .{ .role = .label, .name = self.text, .bounds = rect };
     }
 
     pub fn preferredSize(self: *const Label, r: *const Renderer) Size {

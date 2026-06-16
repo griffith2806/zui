@@ -2,6 +2,7 @@ const std          = @import("std");
 const builtin      = @import("builtin");
 const build_options = @import("build_options");
 const event_mod    = @import("../events/event.zig");
+const node_mod     = @import("../accessibility/node.zig");
 
 extern "kernel32" fn GetTickCount64() callconv(std.builtin.CallingConvention.winapi) u64;
 extern "kernel32" fn Sleep(dwMs: u32) callconv(std.builtin.CallingConvention.winapi) void;
@@ -97,6 +98,28 @@ pub const Application = struct {
             },
             .opengl  => self.renderer.present(),
             .vulkan  => self.renderer.present(),
+        }
+    }
+
+    /// Set up the Windows UIA accessibility tree for the app window.
+    /// Call once after `init`, before the main loop.
+    pub fn initUia(self: *Application, title: []const u8) !void {
+        if (comptime builtin.os.tag == .windows) {
+            try self.window.initUia(self.alloc, title);
+        }
+    }
+
+    pub fn deinitUia(self: *Application) void {
+        if (comptime builtin.os.tag == .windows) {
+            self.window.deinitUia();
+        }
+    }
+
+    /// Publish the current widget tree to screen readers / UIA clients.
+    /// Call once per frame after drawing, passing a slice of AccessNode values.
+    pub fn updateAccessibility(self: *Application, nodes: []const node_mod.AccessNode) void {
+        if (comptime builtin.os.tag == .windows) {
+            self.window.updateAccessibility(nodes);
         }
     }
 

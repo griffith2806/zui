@@ -1,11 +1,12 @@
-const std      = @import("std");
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Point    = @import("../layout/geometry.zig").Point;
-const Size     = @import("../layout/geometry.zig").Size;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
-const Signal   = @import("../signals/signal.zig").Signal;
+const std        = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Point      = @import("../layout/geometry.zig").Point;
+const Size       = @import("../layout/geometry.zig").Size;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const Signal     = @import("../signals/signal.zig").Signal;
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const ListView = struct {
     items:         []const []const u8,
@@ -34,6 +35,11 @@ pub const ListView = struct {
             .width  = 200,
             .height = visible * self.item_height,
         };
+    }
+
+    pub fn accessNode(self: *const ListView, rect: Rect, focused: bool) AccessNode {
+        const name = if (self.selected) |s| (if (s < self.items.len) self.items[s] else "List") else "List";
+        return .{ .role = .list, .name = name, .bounds = rect, .state = .{ .focused = focused } };
     }
 
     pub fn draw(self: *const ListView, r: *Renderer, rect: Rect) void {

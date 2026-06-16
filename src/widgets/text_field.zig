@@ -1,11 +1,12 @@
-const std      = @import("std");
-const Color    = @import("../style/color.zig").Color;
-const Theme    = @import("../style/theme.zig").Theme;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Size     = @import("../layout/geometry.zig").Size;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
-const cb       = @import("../platform/win32/clipboard.zig");
+const std        = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Theme      = @import("../style/theme.zig").Theme;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Size       = @import("../layout/geometry.zig").Size;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const cb         = @import("../platform/win32/clipboard.zig");
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const TextField = struct {
     text:       std.ArrayListUnmanaged(u8) = .empty,
@@ -16,6 +17,16 @@ pub const TextField = struct {
 
     pub fn deinit(self: *TextField, alloc: std.mem.Allocator) void {
         self.text.deinit(alloc);
+    }
+
+    pub fn accessNode(self: *const TextField, name: []const u8, rect: Rect) AccessNode {
+        return .{
+            .role   = .text_field,
+            .name   = name,
+            .value  = self.text.items,
+            .bounds = rect,
+            .state  = .{ .focused = self.focused },
+        };
     }
 
     pub fn draw(self: *TextField, r: *Renderer, rect: Rect, theme: Theme) void {
