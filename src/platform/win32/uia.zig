@@ -169,10 +169,10 @@ const UIA_EditControlTypeId       : i32 = 50004;
 const UIA_GroupControlTypeId      : i32 = 50026;
 const UIA_ListControlTypeId       : i32 = 50008;
 const UIA_ListItemControlTypeId   : i32 = 50007;
-const UIA_MenuControlTypeId       : i32 = 50011;
-const UIA_MenuItemControlTypeId   : i32 = 50012;
-const UIA_ProgressBarControlTypeId: i32 = 50013;
-const UIA_SliderControlTypeId     : i32 = 50016;
+const UIA_MenuControlTypeId       : i32 = 50009;
+const UIA_MenuItemControlTypeId   : i32 = 50011;
+const UIA_ProgressBarControlTypeId: i32 = 50012;
+const UIA_SliderControlTypeId     : i32 = 50015;
 const UIA_TabControlTypeId        : i32 = 50018;
 const UIA_TabItemControlTypeId    : i32 = 50019;
 const UIA_TextControlTypeId       : i32 = 50020;
@@ -314,6 +314,8 @@ pub const UiaTree = struct {
     window_provider:  *WindowProvider,
     widget_providers: std.ArrayListUnmanaged(*WidgetProvider),
     mutex:            SpinLock,
+    snapshot:         [96]AccessNode = undefined,
+    snapshot_len:     usize          = 0,
 
     pub fn create(
         alloc: std.mem.Allocator,
@@ -346,6 +348,16 @@ pub const UiaTree = struct {
     }
 
     pub fn update(self: *UiaTree, nodes: []const AccessNode) void {
+        // Skip rebuild when nothing changed — avoids N allocs/frees every frame.
+        if (nodes.len == self.snapshot_len and
+            std.mem.eql(u8, std.mem.sliceAsBytes(nodes),
+                        std.mem.sliceAsBytes(self.snapshot[0..self.snapshot_len])))
+            return;
+
+        const copy_len = @min(nodes.len, self.snapshot.len);
+        @memcpy(self.snapshot[0..copy_len], nodes[0..copy_len]);
+        self.snapshot_len = copy_len;
+
         self.mutex.lock();
         defer self.mutex.unlock();
         for (self.widget_providers.items) |wp| {

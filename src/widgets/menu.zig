@@ -1,9 +1,10 @@
-const std      = @import("std");
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
-const Signal   = @import("../signals/signal.zig").Signal;
+const std        = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const Signal     = @import("../signals/signal.zig").Signal;
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const MenuItem = struct {
     label:     []const u8,
@@ -103,6 +104,21 @@ pub const Menu = struct {
                 );
             }
         }
+    }
+
+    pub fn accessNodes(self: *const Menu, out: []AccessNode) usize {
+        if (!self.open) return 0;
+        const mr = self.menuRect();
+        var n: usize = 0;
+        for (self.items, 0..) |item, i| {
+            if (item.separator) continue;
+            if (n >= out.len) break;
+            const iy_abs = mr.y + self.itemY(i);
+            const item_r = Rect.init(mr.x + 4, iy_abs, self.width -| 8, self.item_height);
+            out[n] = .{ .role = .menu_item, .name = item.label, .bounds = item_r, .state = .{ .enabled = item.enabled } };
+            n += 1;
+        }
+        return n;
     }
 
     pub fn handleEvent(self: *Menu, event: Event) bool {

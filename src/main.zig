@@ -596,7 +596,13 @@ pub fn main(init: std.process.Init) !void {
             got_event = true;
             switch (ev) {
                 .close     => app.window.should_close = true,
-                .key_press => |k| { if (k.key == .escape) app.window.should_close = true; },
+                .key_press => |k| {
+                    if (k.key == .escape and
+                        !overlays.dialog.visible and
+                        !overlays.menu.open and
+                        !inputs.dropdown.open)
+                        app.window.should_close = true;
+                },
                 .mouse_move => |m| {
                     for (nav_rects, 0..) |nr, i|
                         nav_hovered[i] = nr.contains(.{ .x = m.x, .y = m.y });
@@ -676,7 +682,7 @@ pub fn main(init: std.process.Init) !void {
             app.present();
 
             // Publish current widget positions to UIA / screen readers.
-            buildAccessibilityTree(&app, page, &controls, &inputs, &nav_rects);
+            buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, about_expanded, &nav_rects);
         }
         app.capFps(60);
     }
@@ -687,11 +693,14 @@ pub fn main(init: std.process.Init) !void {
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn buildAccessibilityTree(
-    app:       *zui.Application,
-    page:      Page,
-    controls:  *const ControlsState,
-    inputs:    *const InputsState,
-    nav_rects: []const zui.Rect,
+    app:            *zui.Application,
+    page:           Page,
+    controls:       *const ControlsState,
+    inputs:         *const InputsState,
+    animations:     *const AnimationsState,
+    overlays:       *const OverlaysState,
+    about_expanded: bool,
+    nav_rects:      []const zui.Rect,
 ) void {
     var nodes: [96]zui.AccessNode = undefined;
     var n: usize = 0;
@@ -704,6 +713,17 @@ fn buildAccessibilityTree(
             .name   = item.label,
             .bounds = nav_rects[i],
             .state  = .{ .selected = item.page == page, .enabled = true },
+        };
+        n += 1;
+    }
+    // Sidebar search box (decorative; read-only for screen readers)
+    if (n < nodes.len) {
+        const sx: i32 = HDR_H + 8 + @as(i32, NAV_ITEMS.len) * 44 + 8;
+        nodes[n] = .{
+            .role   = .text_field,
+            .name   = "Search",
+            .bounds = zui.Rect.init(8, sx, NAV_W - 16, 30),
+            .state  = .{ .read_only = true, .enabled = true },
         };
         n += 1;
     }
@@ -726,8 +746,34 @@ fn buildAccessibilityTree(
             if (n < nodes.len) { nodes[n] = controls.pb.accessNode(zui.Rect.init(rx, base + 142, 320, 8)); n += 1; }
         },
         .inputs => {
+            if (n < nodes.len) { nodes[n] = inputs.text_area.accessNode("Editor", zui.Rect.init(lx, base + 40, 330, 220)); n += 1; }
             if (n < nodes.len) { nodes[n] = inputs.list_view.accessNode(zui.Rect.init(lx + 380, base + 40, 260, 180), false); n += 1; }
             if (n < nodes.len) { nodes[n] = inputs.dropdown.accessNode(zui.Rect.init(lx + 380, base + 278, 260, 36), false); n += 1; }
+        },
+        .overlays => {
+            if (n < nodes.len) { nodes[n] = overlays.dialog_btn.accessNode(zui.Rect.init(lx, base + 40, 140, 34), false); n += 1; }
+            if (n < nodes.len) { nodes[n] = overlays.menu_btn.accessNode(zui.Rect.init(rx, base + 40, 140, 34), false); n += 1; }
+            if (overlays.dialog.visible) n += overlays.dialog.accessNodes(zui.Rect.init(0, 0, W, H), nodes[n..]);
+            if (overlays.menu.open)      n += overlays.menu.accessNodes(nodes[n..]);
+        },
+        .animations => {
+            if (n < nodes.len) { nodes[n] = animations.btn_play.accessNode(zui.Rect.init(lx, base + 20, 100, 30), false); n += 1; }
+            if (n < nodes.len) { nodes[n] = animations.btn_rev.accessNode(zui.Rect.init(lx + 110, base + 20, 110, 30), false); n += 1; }
+            if (n < nodes.len) { nodes[n] = animations.btn_color.accessNode(zui.Rect.init(lx + 220, base + 304, 120, 34), false); n += 1; }
+        },
+        .about => {
+            if (n < nodes.len) {
+                // About page uses HDR_H+16 as its base, not cy().
+                const about_lcy: i32 = HDR_H + 16;
+                const expand_y: i32  = about_lcy + 144 + 9 * 22 + 16;
+                nodes[n] = .{
+                    .role   = .button,
+                    .name   = if (about_expanded) "Architecture notes (collapse)" else "Architecture notes (expand)",
+                    .bounds = zui.Rect.init(lx, expand_y, 500, 22),
+                    .state  = .{ .expanded = about_expanded, .enabled = true },
+                };
+                n += 1;
+            }
         },
         else => {},
     }

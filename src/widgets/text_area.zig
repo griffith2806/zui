@@ -1,9 +1,10 @@
-const std      = @import("std");
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Size     = @import("../layout/geometry.zig").Size;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
+const std        = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Size       = @import("../layout/geometry.zig").Size;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const TextArea = struct {
     lines:          std.ArrayListUnmanaged(std.ArrayListUnmanaged(u8)),
@@ -25,6 +26,15 @@ pub const TextArea = struct {
         var ta = TextArea{ .lines = .empty };
         try ta.lines.append(alloc, std.ArrayListUnmanaged(u8).empty);
         return ta;
+    }
+
+    pub fn accessNode(self: *const TextArea, name: []const u8, rect: Rect) AccessNode {
+        return .{
+            .role   = .text_area,
+            .name   = name,
+            .bounds = rect,
+            .state  = .{ .focused = self.focused, .enabled = true },
+        };
     }
 
     pub fn deinit(self: *TextArea, alloc: std.mem.Allocator) void {

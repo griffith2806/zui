@@ -1,9 +1,10 @@
-const std      = @import("std");
-const Color    = @import("../style/color.zig").Color;
-const Rect     = @import("../layout/geometry.zig").Rect;
-const Renderer = @import("../graphics/renderer.zig").Renderer;
-const Event    = @import("../events/event.zig").Event;
-const Signal   = @import("../signals/signal.zig").Signal;
+const std        = @import("std");
+const Color      = @import("../style/color.zig").Color;
+const Rect       = @import("../layout/geometry.zig").Rect;
+const Renderer   = @import("../graphics/renderer.zig").Renderer;
+const Event      = @import("../events/event.zig").Event;
+const Signal     = @import("../signals/signal.zig").Signal;
+const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const Dialog = struct {
     title:          []const u8,
@@ -120,6 +121,21 @@ pub const Dialog = struct {
         );
 
         _ = btn_area_bg;
+    }
+
+    pub fn accessNodes(self: *const Dialog, window_rect: Rect, out: []AccessNode) usize {
+        if (!self.visible) return 0;
+        const rects = self.buttonRects(window_rect);
+        var n: usize = 0;
+        if (n < out.len) {
+            out[n] = .{ .role = .button, .name = self.cancel_label, .bounds = rects.cancel, .state = .{ .enabled = true } };
+            n += 1;
+        }
+        if (n < out.len) {
+            out[n] = .{ .role = .button, .name = self.ok_label, .bounds = rects.ok, .state = .{ .enabled = true } };
+            n += 1;
+        }
+        return n;
     }
 
     pub fn handleEvent(self: *Dialog, event: Event, window_rect: Rect) bool {
