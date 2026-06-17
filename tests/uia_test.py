@@ -256,6 +256,20 @@ def test_file_dialogs(win, r):
     r.assert_exists(win, "Browse Folder", "Button")
 
 
+def test_new_widgets(win, r):
+    print("\n[New Widgets]")
+    nav(win, "New Widgets", r)
+
+    # NumberInput widgets (UIA role = Slider)
+    r.assert_exists(win, "NumberInput", "Slider")
+
+    # TreeView (UIA role = List)
+    r.assert_exists(win, "Tree", "List")
+
+    # DatePicker (UIA role = ComboBox)
+    r.assert_exists(win, "DatePicker", "ComboBox")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -292,6 +306,7 @@ def main():
         test_images(win, r)
         test_data_binding(win, r)
         test_file_dialogs(win, r)
+        test_new_widgets(win, r)
     finally:
         if proc:
             proc.terminate()

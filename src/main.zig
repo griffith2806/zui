@@ -22,7 +22,7 @@ var W: u32 = 1060;
 var H: u32 = 680;
 
 // ── Navigation ───────────────────────────────────────────────────────────────
-const Page = enum { dashboard, controls, inputs, overlays, colors, layout, styles, animations, about, images, data_binding, file_dialogs };
+const Page = enum { dashboard, controls, inputs, overlays, colors, layout, styles, animations, about, images, data_binding, file_dialogs, new_widgets };
 
 const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
     .{ .label = "Dashboard",    .page = .dashboard,    .icon = "D" },
@@ -37,6 +37,7 @@ const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
     .{ .label = "Images",       .page = .images,       .icon = "G" },
     .{ .label = "Data Binding", .page = .data_binding, .icon = "B" },
     .{ .label = "File Dialogs", .page = .file_dialogs, .icon = "F" },
+    .{ .label = "New Widgets",  .page = .new_widgets,  .icon = "N" },
 };
 
 // ── Animation demo data ──────────────────────────────────────────────────────
@@ -867,6 +868,119 @@ const FileDialogsState = struct {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// PAGE STATE: New Widgets
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Sample tree data (file-explorer style)
+var TREE_NODES = [_]zui.TreeNode{
+    .{ .label = "src",            .depth = 0, .has_children = true,  .expanded = true  },
+    .{ .label = "widgets",        .depth = 1, .has_children = true,  .expanded = true  },
+    .{ .label = "button.zig",     .depth = 2, .has_children = false, .expanded = false },
+    .{ .label = "label.zig",      .depth = 2, .has_children = false, .expanded = false },
+    .{ .label = "tree_view.zig",  .depth = 2, .has_children = false, .expanded = false },
+    .{ .label = "core",           .depth = 1, .has_children = true,  .expanded = false },
+    .{ .label = "app.zig",        .depth = 2, .has_children = false, .expanded = false },
+    .{ .label = "animation.zig",  .depth = 2, .has_children = false, .expanded = false },
+    .{ .label = "events",         .depth = 1, .has_children = true,  .expanded = false },
+    .{ .label = "event.zig",      .depth = 2, .has_children = false, .expanded = false },
+    .{ .label = "build.zig",      .depth = 0, .has_children = false, .expanded = false },
+    .{ .label = "README.md",      .depth = 0, .has_children = false, .expanded = false },
+};
+
+const NewWidgetsState = struct {
+    num_int:     zui.NumberInput  = .{ .value = 42, .min = 0, .max = 100, .step = 1 },
+    num_float:   zui.NumberInput  = .{ .value = 3.14, .min = 0, .max = 10, .step = 0.1 },
+    tree:        zui.TreeView     = .{ .nodes = &TREE_NODES },
+    date:        zui.DatePicker   = .{ .day = 17, .month = 6, .year = 2026 },
+    tooltip_int: zui.Tooltip      = .{ .text = "Use +/- or arrow keys" },
+    tip_int_hov: bool             = false,
+
+    pub fn deinit(self: *NewWidgetsState, alloc: std.mem.Allocator) void {
+        self.num_int.deinit(alloc);
+        self.num_float.deinit(alloc);
+        self.date.deinit(alloc);
+    }
+
+    pub fn handleEvent(self: *NewWidgetsState, ev: zui.Event) void {
+        const lx = cx(); const base = cy();
+        const rx: i32 = lx + 420;
+
+        const num_int_rect   = zui.Rect.init(lx, base + 40, 160, 34);
+        const num_float_rect = zui.Rect.init(lx, base + 110, 160, 34);
+        const tree_rect      = zui.Rect.init(rx, base + 40, 260, 224);
+        const date_rect      = zui.Rect.init(lx, base + 200, 260, 34);
+
+        self.num_int.handleEvent(ev, num_int_rect);
+        self.num_float.handleEvent(ev, num_float_rect);
+        self.tree.handleEvent(ev, tree_rect);
+        self.date.handleEvent(ev, date_rect);
+
+        switch (ev) {
+            .mouse_move => |m| {
+                self.tip_int_hov = num_int_rect.contains(.{ .x = m.x, .y = m.y });
+            },
+            else => {},
+        }
+    }
+
+    pub fn update(self: *NewWidgetsState, dt_s: f32) void {
+        self.tooltip_int.update(dt_s, self.tip_int_hov);
+    }
+
+    pub fn draw(self: *const NewWidgetsState, r: *zui.Renderer, dark_mode: bool, win_rect: zui.Rect) void {
+        const lx = cx(); const base = cy(); const ly = HDR_H + 16;
+        const rx: i32 = lx + 420;
+
+        r.drawTextScaled("New Widgets", lx, ly, FG, 2);
+        r.drawText("NumberInput, TreeView, DatePicker, Tooltip", lx, ly + 30, FG_SEC);
+
+        // ── NumberInput (integer) ─────────────────────────────────────────────
+        sectionLabel(r, lx, base, "NumberInput  (integer, step=1)");
+        r.drawText("Click +/- or focus then use arrow keys", lx, base + 20, FG_TER);
+        self.num_int.draw(r, zui.Rect.init(lx, base + 40, 160, 34));
+        var ni_buf: [32]u8 = undefined;
+        const ni_str = std.fmt.bufPrint(&ni_buf, "value = {d:.0}", .{self.num_int.value}) catch "";
+        r.drawText(ni_str, lx + 172, base + 51, FG_SEC);
+
+        // ── NumberInput (float) ───────────────────────────────────────────────
+        sectionLabel(r, lx, base + 78, "NumberInput  (float, step=0.1)");
+        self.num_float.draw(r, zui.Rect.init(lx, base + 110, 160, 34));
+        var nf_buf: [32]u8 = undefined;
+        const nf_str = std.fmt.bufPrint(&nf_buf, "value = {d:.2}", .{self.num_float.value}) catch "";
+        r.drawText(nf_str, lx + 172, base + 121, FG_SEC);
+
+        // ── Tooltip demo ──────────────────────────────────────────────────────
+        sectionLabel(r, lx, base + 160, "Tooltip  (hover NumberInput above)");
+        self.tooltip_int.draw(r, zui.Rect.init(lx, base + 40, 160, 34), win_rect);
+
+        // ── DatePicker ────────────────────────────────────────────────────────
+        sectionLabel(r, lx, base + 182, "DatePicker  (day / month / year)");
+        r.drawText("Click a segment to open its dropdown", lx, base + 200 - 2, FG_TER);
+        self.date.draw(r, zui.Rect.init(lx, base + 200 + 16, 260, 34));
+
+        // Show selected date
+        var date_buf: [16]u8 = undefined;
+        const date_str = std.fmt.bufPrint(&date_buf, "{d:0>4}-{d:0>2}-{d:0>2}",
+            .{ self.date.year, self.date.month, self.date.day }) catch "";
+        r.drawText(date_str, lx, base + 260, FG_SEC);
+
+        // ── TreeView ──────────────────────────────────────────────────────────
+        sectionLabel(r, rx, base, "TreeView  (expand/collapse)");
+        r.drawText("Click rows to select; click folder arrows to expand/collapse", rx, base + 20, FG_TER);
+        const tree_rect = zui.Rect.init(rx, base + 40, 260, 224);
+        drawCard(r, tree_rect, dark_mode);
+        self.tree.draw(r, tree_rect);
+        if (self.tree.selected) |sel| {
+            var sel_buf: [64]u8 = undefined;
+            const sel_str = std.fmt.bufPrint(&sel_buf, "Selected: {s}", .{TREE_NODES[sel].label}) catch "";
+            r.drawText(sel_str, rx, base + 272, FG_SEC);
+        } else {
+            r.drawText("(nothing selected)", rx, base + 272, FG_TER);
+        }
+    }
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MAIN LOOP
 // ══════════════════════════════════════════════════════════════════════════════
 pub fn main(init: std.process.Init) !void {
@@ -913,6 +1027,9 @@ pub fn main(init: std.process.Init) !void {
 
     var file_dialogs = FileDialogsState{};
     defer file_dialogs.deinit(alloc);
+
+    var new_widgets = NewWidgetsState{};
+    defer new_widgets.deinit(alloc);
 
     var nav_rects: [NAV_ITEMS.len]zui.Rect = undefined;
     for (0..NAV_ITEMS.len) |i|
@@ -969,6 +1086,7 @@ pub fn main(init: std.process.Init) !void {
                 .images       => images.handleEvent(ev, alloc),
                 .data_binding => data_binding.handleEvent(ev),
                 .file_dialogs => file_dialogs.handleEvent(ev, alloc),
+                .new_widgets  => new_widgets.handleEvent(ev),
                 .about        => switch (ev) {
                     .mouse_press => |m| {
                         const exp_y: i32 = HDR_H + 16 + 144 + 9 * 22 + 16;
@@ -999,6 +1117,7 @@ pub fn main(init: std.process.Init) !void {
         images.update(dt_s);
         data_binding.update(dt_s);
         file_dialogs.update(dt_s);
+        if (page == .new_widgets) new_widgets.update(dt_s);
         if (page == .animations) animations.update(dt_s);
         for (0..NAV_ITEMS.len) |i| {
             nav_hover_t[i] += (@as(f32, if (nav_hovered[i]) 1.0 else 0.0) - nav_hover_t[i]) *
@@ -1015,7 +1134,8 @@ pub fn main(init: std.process.Init) !void {
             if (btn_anim or controls.pb_time < 4.0)
                 redraw_cnt = @max(redraw_cnt, 1);
         }
-        if (page == .overlays and overlays.tip_hovered) redraw_cnt = @max(redraw_cnt, 2);
+        if (page == .overlays    and overlays.tip_hovered)     redraw_cnt = @max(redraw_cnt, 2);
+        if (page == .new_widgets and new_widgets.tip_int_hov)  redraw_cnt = @max(redraw_cnt, 2);
         if (page == .animations) {
             var anim_live = !animations.ball_x.isSettled() or !animations.ball_y.isSettled() or
                             !animations.color_anim.r.isSettled();
@@ -1045,6 +1165,7 @@ pub fn main(init: std.process.Init) !void {
                 .images       => images.draw(&app.renderer, dark_mode),
                 .data_binding => data_binding.draw(&app.renderer, dark_mode),
                 .file_dialogs => file_dialogs.draw(&app.renderer, dark_mode),
+                .new_widgets  => new_widgets.draw(&app.renderer, dark_mode, zui.Rect.init(0, 0, W, H)),
             }
 
             app.present();
@@ -1052,7 +1173,7 @@ pub fn main(init: std.process.Init) !void {
             // Publish widget positions to UIA only when something accessibility-
             // relevant changed (page nav, clicks, key events) — not on every repaint.
             if (uia_dirty) {
-                buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, &images, &data_binding, &file_dialogs, about_expanded, &nav_rects, alloc);
+                buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, &images, &data_binding, &file_dialogs, &new_widgets, about_expanded, &nav_rects, alloc);
                 uia_dirty = false;
             }
         }
@@ -1074,11 +1195,12 @@ fn buildAccessibilityTree(
     images:         *ImagesState,
     data_binding:   *DataBindingState,
     file_dialogs:   *FileDialogsState,
+    new_widgets_st: *NewWidgetsState,
     about_expanded: bool,
     nav_rects:      []const zui.Rect,
     alloc:          std.mem.Allocator,
 ) void {
-    var nodes: [96]zui.AccessNode = undefined;
+    var nodes: [128]zui.AccessNode = undefined;
     var n: usize = 0;
 
     // Navigation sidebar items (always present)
@@ -1313,6 +1435,26 @@ fn buildAccessibilityTree(
                 nodes[n] = nd; n += 1;
             }
         },
+        .new_widgets => {
+            const lx2 = cx(); const base2 = cy();
+            const rx2: i32 = lx2 + 420;
+            if (n < nodes.len) {
+                nodes[n] = new_widgets_st.num_int.accessNode(zui.Rect.init(lx2, base2 + 40, 160, 34));
+                n += 1;
+            }
+            if (n < nodes.len) {
+                nodes[n] = new_widgets_st.num_float.accessNode(zui.Rect.init(lx2, base2 + 110, 160, 34));
+                n += 1;
+            }
+            if (n < nodes.len) {
+                nodes[n] = new_widgets_st.tree.accessNode(zui.Rect.init(rx2, base2 + 40, 260, 224));
+                n += 1;
+            }
+            if (n < nodes.len) {
+                nodes[n] = new_widgets_st.date.accessNode(zui.Rect.init(lx2, base2 + 216, 260, 34));
+                n += 1;
+            }
+        },
         else => {},
     }
 
@@ -1375,6 +1517,7 @@ fn drawHeader(r: *zui.Renderer, page: Page, dark_mode: bool) void {
         .styles       => "Styles",       .animations   => "Animations",
         .about        => "About",        .images       => "Images",
         .data_binding => "Data Binding", .file_dialogs => "File Dialogs",
+        .new_widgets  => "New Widgets",
     };
     const bx = NAV_W + 20;
     const gw: i32 = @intCast(r.textWidth("zui Gallery"));

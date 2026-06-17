@@ -75,6 +75,10 @@ pub const Tooltip     = @import("widgets/tooltip.zig").Tooltip;
 pub const Dialog      = @import("widgets/dialog.zig").Dialog;
 pub const MenuItem    = @import("widgets/menu.zig").MenuItem;
 pub const Menu        = @import("widgets/menu.zig").Menu;
+pub const NumberInput = @import("widgets/number_input.zig").NumberInput;
+pub const TreeView    = @import("widgets/tree_view.zig").TreeView;
+pub const TreeNode    = @import("widgets/tree_view.zig").TreeNode;
+pub const DatePicker  = @import("widgets/date_picker.zig").DatePicker;
 
 // File dialogs
 const file_dialog_mod  = @import("platform/file_dialog.zig");
