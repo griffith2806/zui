@@ -23,8 +23,20 @@
   - build.zig: Backend enum extended to `{ software, opengl, vulkan }`
   - app.zig: `.vulkan` branch added to init / deinit / syncSize / present
 
+- Direct2D + DirectWrite renderer backend (`src/graphics/d2d/renderer.zig`) — GPU-accelerated, opt-in with `-Dbackend=d2d`
+  - `ID2D1HwndRenderTarget` for GPU rendering directly to HWND (replaces CPU DIB writes)
+  - `IDWriteFactory` + `IDWriteTextFormat` per font scale (Segoe UI Variable, sizes 14/22/32/44/60/80 DIP)
+  - `IDWriteTextLayout` for inline text drawing and width measurement (proper Unicode shaping, RTL support)
+  - All COM bindings as Zig `extern struct { vtbl: *const VtblType }` following wic.zig/file_dialog.zig pattern
+  - Full method parity with software renderer: clear/fillRect/fillRoundRect/drawText/drawTextScaled/textWidth/textWidthScaled/flushText/clearTextQueue/setClip/clearClip/drawImage/drawImageRaw/resize/deinit
+  - Clip: `PushAxisAlignedClip`/`PopAxisAlignedClip` with `clip_pushed` state tracking
+  - Image: ARGB→BGRA conversion + `CreateBitmap`/`DrawBitmap` (stack buffer up to 512×512)
+  - build.zig: Backend enum extended to `{ software, opengl, vulkan, d2d }`, links d2d1 + dwrite on Windows
+  - app.zig: `.d2d` branch added to RendererMod / init / deinit / syncSize / present
+
 ### Up Next
 - drawImageRaw in OpenGL backend (texture upload + quad render)
 - Vulkan: replace SPIR-V stubs with real compiled shaders (requires glslangValidator / shaderc)
 - Vulkan: swapchain recreation on resize (vkAcquireNextImageKHR VK_ERROR_OUT_OF_DATE_KHR)
 - Vulkan: glyph atlas pipeline for text rendering
+- D2D: large image support (> 512×512) via allocator-backed conversion buffer

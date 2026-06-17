@@ -48,6 +48,7 @@ const RendererMod = switch (build_options.backend) {
     .software => @import("../graphics/software/renderer.zig"),
     .opengl   => @import("../graphics/opengl/renderer.zig"),
     .vulkan   => @import("../graphics/vulkan/renderer.zig"),
+    .d2d      => @import("../graphics/d2d/renderer.zig"),
 };
 pub const Renderer = RendererMod.Renderer;
 
@@ -71,6 +72,7 @@ pub const Application = struct {
             .software => Renderer.init(win.pixels, win.width, win.height),
             .opengl   => try Renderer.init(win.hwnd, win.width, win.height),
             .vulkan   => try Renderer.init(win.hwnd, win.width, win.height),
+            .d2d      => try Renderer.init(win.hwnd, win.width, win.height),
         };
 
         // GDI text is Win32-only; on other platforms the bitmap font fallback is used.
@@ -86,6 +88,7 @@ pub const Application = struct {
             .software => self.renderer.deinit(),
             .opengl   => self.renderer.deinit(),
             .vulkan   => self.renderer.deinit(),
+            .d2d      => self.renderer.deinit(),
         }
         self.window.deinit(self.alloc);
     }
@@ -111,6 +114,7 @@ pub const Application = struct {
             .software => self.renderer.resize(self.window.pixels, self.window.width, self.window.height),
             .opengl   => self.renderer.resize(self.window.width, self.window.height),
             .vulkan   => self.renderer.resize(self.window.width, self.window.height),
+            .d2d      => self.renderer.resize(self.window.width, self.window.height),
         }
     }
 
@@ -129,6 +133,14 @@ pub const Application = struct {
             },
             .opengl  => self.renderer.present(),
             .vulkan  => self.renderer.present(),
+            .d2d     => {
+                if (comptime builtin.os.tag == .windows) {
+                    // D2D renders directly to HWND; EndDraw() is called in flushText().
+                    // screen_dc is ignored by the D2D renderer; pass a dummy non-null pointer.
+                    var dummy: u8 = 0;
+                    self.renderer.flushText(@ptrCast(&dummy));
+                }
+            },
         }
     }
 

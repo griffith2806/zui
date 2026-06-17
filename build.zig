@@ -6,13 +6,13 @@ const std = @import("std");
 // for defining build steps and express dependencies between them, allowing the
 // build runner to parallelize the build automatically (and the cache system to
 // know when a step doesn't need to be re-run).
-pub const Backend = enum { software, opengl, vulkan };
+pub const Backend = enum { software, opengl, vulkan, d2d };
 
 pub fn build(b: *std.Build) void {
     const target   = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const backend = b.option(Backend, "backend", "Renderer backend: software (default), opengl, or vulkan") orelse .software;
+    const backend = b.option(Backend, "backend", "Renderer backend: software (default), opengl, vulkan, or d2d") orelse .software;
     const opts = b.addOptions();
     opts.addOption(Backend, "backend", backend);
     // It's also possible to define more custom flags to toggle optional features
@@ -105,6 +105,11 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .windows) {
         exe.root_module.linkSystemLibrary("ole32", .{});
         exe.root_module.linkSystemLibrary("shell32", .{});
+    }
+    // Direct2D + DirectWrite backend.
+    if (target.result.os.tag == .windows and backend == .d2d) {
+        exe.root_module.linkSystemLibrary("d2d1", .{});
+        exe.root_module.linkSystemLibrary("dwrite", .{});
     }
 
     b.installArtifact(exe);
