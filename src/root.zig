@@ -40,6 +40,12 @@ pub const Animated      = @import("core/animator.zig").Animated;
 pub const AnimatedColor = @import("core/animator.zig").AnimatedColor;
 pub const Easing        = @import("core/animator.zig").Easing;
 
+// Builder DSL
+const builder_mod = @import("core/builder.zig");
+pub const WidgetTag  = builder_mod.WidgetTag;
+pub const WidgetType = builder_mod.WidgetType;
+pub const ui         = builder_mod.ui;
+
 // Graphics
 pub const Image = @import("graphics/image.zig").Image;
 
