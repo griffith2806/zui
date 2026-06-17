@@ -614,6 +614,9 @@ pub fn main(init: std.process.Init) !void {
                     }
                 },
                 .resize => |sz| { W = sz.width; H = sz.height; },
+                // Notify UIA when the IME composition string changes so screen
+                // readers (Narrator, NVDA, JAWS) can announce the provisional text.
+                .ime_composition => app.notifyImeCompositionChanged(),
                 else => {},
             }
             switch (page) {
@@ -682,7 +685,7 @@ pub fn main(init: std.process.Init) !void {
             app.present();
 
             // Publish current widget positions to UIA / screen readers.
-            buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, about_expanded, &nav_rects);
+            buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, about_expanded, &nav_rects, alloc);
         }
         app.capFps(60);
     }
@@ -695,12 +698,13 @@ pub fn main(init: std.process.Init) !void {
 fn buildAccessibilityTree(
     app:            *zui.Application,
     page:           Page,
-    controls:       *const ControlsState,
+    controls:       *ControlsState,
     inputs:         *const InputsState,
     animations:     *const AnimationsState,
     overlays:       *const OverlaysState,
     about_expanded: bool,
     nav_rects:      []const zui.Rect,
+    alloc:          std.mem.Allocator,
 ) void {
     var nodes: [96]zui.AccessNode = undefined;
     var n: usize = 0;
@@ -734,8 +738,8 @@ fn buildAccessibilityTree(
 
     switch (page) {
         .controls => {
-            if (n < nodes.len) { nodes[n] = controls.field_search.accessNode("Search", zui.Rect.init(lx, base + 40, 300, 34)); n += 1; }
-            if (n < nodes.len) { nodes[n] = controls.field_name.accessNode("Name", zui.Rect.init(lx, base + 100, 280, 34)); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.field_search.accessNode("Search", zui.Rect.init(lx, base + 40, 300, 34), alloc); n += 1; }
+            if (n < nodes.len) { nodes[n] = controls.field_name.accessNode("Name", zui.Rect.init(lx, base + 100, 280, 34), alloc); n += 1; }
             if (n < nodes.len) { nodes[n] = controls.btn_inc.accessNode(zui.Rect.init(lx, base + 170, 130, 34), false); n += 1; }
             if (n < nodes.len) { nodes[n] = controls.btn_reset.accessNode(zui.Rect.init(lx + 140, base + 170, 100, 34), false); n += 1; }
             if (n < nodes.len) { nodes[n] = controls.btn_theme.accessNode(zui.Rect.init(lx, base + 214, 160, 34), false); n += 1; }

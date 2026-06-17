@@ -24,6 +24,21 @@
 - Controls page: Search/Name text fields, Increment/Reset/Toggle buttons, slider, checkboxes, tab view
 - Inputs page: list view, dropdown
 
+### IME / CJK Composition + UIA Live Region (added)
+- `Event.ime_composition` (ImeCompositionEvent with inline 192-byte buf) and `Event.ime_cancel`
+- Win32 WM_IME_STARTCOMPOSITION / WM_IME_COMPOSITION / WM_IME_ENDCOMPOSITION handling
+  - GCS_COMPSTR retrieved via ImmGetCompositionStringW (imm32.dll), converted UTF-16→UTF-8
+  - Composition string stored inline in ImeCompositionEvent (no heap, ring-buffer safe)
+- TextField: `ime_active`, `ime_composition`, `_value_scratch` fields
+  - `accessNode()` now requires `alloc` param; exposes `committed + composition` in value field
+  - `handleEvent` handles `.ime_composition` (copy to buffer) and `.ime_cancel` (clear state)
+  - `draw()`: renders composition text after committed text in `theme.input_hint` colour + 1px underline
+  - Cursor hidden while IME active (OS candidate window owns cursor display)
+- `UiaTree.notifyImeCompositionChanged()` fires UIA_Text_TextChangedEventId (20015) on focused text widget
+  - `UiaRaiseAutomationEvent` loaded dynamically from UIAutomationCore.dll
+- `Application.notifyImeCompositionChanged()` — cross-platform wrapper (no-op on non-Windows)
+- main.zig fires `app.notifyImeCompositionChanged()` on every `ime_composition` event
+
 ### Architecture
 - Flat tree: window root → N widget children (all leaves)
 - BSTR via SysAllocStringLen (oleaut32); SAFEARRAY runtime IDs via SafeArrayCreateVector

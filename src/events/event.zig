@@ -59,6 +59,32 @@ pub const ScrollEvent = struct {
     dy: f32,
 };
 
+/// Payload for an in-progress IME composition string update.
+/// `text()` returns the provisional (uncommitted) composition string in UTF-8.
+/// The string is stored inline so event lifetime equals ring-buffer lifetime —
+/// no separate allocation or slice-lifetime tracking is needed.
+/// 192 bytes fits up to 64 CJK characters (max 3 UTF-8 bytes each), which is
+/// far larger than any real-world composition session.
+pub const IME_BUF_MAX = 192;
+
+pub const ImeCompositionEvent = struct {
+    buf: [IME_BUF_MAX]u8 = undefined,
+    len: usize           = 0,
+
+    pub fn text(self: *const ImeCompositionEvent) []const u8 {
+        return self.buf[0..self.len];
+    }
+
+    /// Fill from a UTF-8 slice, truncating silently if too long.
+    pub fn fromSlice(src: []const u8) ImeCompositionEvent {
+        var ev = ImeCompositionEvent{};
+        const n = @min(src.len, IME_BUF_MAX);
+        @memcpy(ev.buf[0..n], src[0..n]);
+        ev.len = n;
+        return ev;
+    }
+};
+
 pub const Event = union(enum) {
     mouse_press: MouseEvent,
     mouse_release: MouseEvent,
@@ -66,6 +92,10 @@ pub const Event = union(enum) {
     key_press: KeyEvent,
     key_release: KeyEvent,
     char_input: u21,
+    /// IME composition update — `text` is the provisional (uncommitted) string.
+    ime_composition: ImeCompositionEvent,
+    /// IME session ended without committing (e.g. user pressed Escape in the IME).
+    ime_cancel: void,
     resize: ResizeEvent,
     scroll: ScrollEvent,
     close: void,

@@ -123,6 +123,16 @@ pub const Application = struct {
         }
     }
 
+    /// Fire a UIA TextChanged event on the currently focused text widget.
+    /// Call this whenever an IME composition string changes so that screen
+    /// readers receive a live-region notification with the provisional text.
+    /// No-op on non-Windows platforms.
+    pub fn notifyImeCompositionChanged(self: *Application) void {
+        if (comptime builtin.os.tag == .windows) {
+            self.window.notifyImeCompositionChanged();
+        }
+    }
+
     /// Sleep until the next frame slot to cap at `target_fps`.
     /// Call immediately after present().  Uses the timestamp recorded by
     /// deltaSeconds() at the start of the frame as the reference point.

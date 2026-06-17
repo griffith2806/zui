@@ -137,9 +137,17 @@ extern "kernel32" fn GetProcAddress(hModule: *anyopaque, lpProcName: [*:0]const 
 
 const UiaReturnFn = *const fn (HWND, WPARAM, LPARAM, *anyopaque) callconv(winapi) LRESULT;
 const UiaHostFn   = *const fn (HWND, *?*anyopaque) callconv(winapi) HRESULT;
+/// UiaRaiseAutomationEvent(pProvider, id) — fires a UIA automation event.
+/// pProvider must be an IRawElementProviderSimple*.
+const UiaRaiseEventFn = *const fn (*anyopaque, i32) callconv(winapi) HRESULT;
 
-var g_UiaReturn: ?UiaReturnFn = null;
-var g_UiaHost:   ?UiaHostFn   = null;
+var g_UiaReturn:     ?UiaReturnFn    = null;
+var g_UiaHost:       ?UiaHostFn      = null;
+var g_UiaRaiseEvent: ?UiaRaiseEventFn = null;
+
+// UIA event IDs used by zui.
+/// Fired when the value (text content) of a text control changes.
+const UIA_Text_TextChangedEventId: i32 = 20015;
 
 pub fn loadUiaFunctions() void {
     const dll = LoadLibraryW(
@@ -149,6 +157,8 @@ pub fn loadUiaFunctions() void {
     g_UiaReturn = @ptrCast(r);
     if (GetProcAddress(dll, "UiaHostProviderFromHwnd")) |h|
         g_UiaHost = @ptrCast(h);
+    if (GetProcAddress(dll, "UiaRaiseAutomationEvent")) |e|
+        g_UiaRaiseEvent = @ptrCast(e);
 }
 
 // ── UIA numeric constants ─────────────────────────────────────────────────────
@@ -377,6 +387,25 @@ pub const UiaTree = struct {
 
     pub fn getWindowProvider(self: *UiaTree) *anyopaque {
         return @ptrCast(&self.window_provider.simple);
+    }
+
+    /// Fire `UIA_Text_TextChangedEventId` on the currently focused text widget.
+    ///
+    /// Call this whenever an IME composition string changes so that screen
+    /// readers (NVDA, JAWS, Narrator) announce the provisional text in real time.
+    /// Safe to call even when UIA is not loaded (g_UiaRaiseEvent == null).
+    pub fn notifyImeCompositionChanged(self: *UiaTree) void {
+        const raise = g_UiaRaiseEvent orelse return;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        for (self.widget_providers.items) |wp| {
+            if (wp.node.state.focused and
+                (wp.node.role == .text_field or wp.node.role == .text_area))
+            {
+                _ = raise(@ptrCast(&wp.simple), UIA_Text_TextChangedEventId);
+                return; // only one widget can be focused at a time
+            }
+        }
     }
 };
 

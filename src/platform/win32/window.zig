@@ -107,20 +107,28 @@ const GWLP_USERDATA: INT = -21;
 const BI_RGB: DWORD = 0;
 const DIB_RGB_COLORS: UINT = 0;
 const SRCCOPY: DWORD = 0x00CC0020;
-const WM_GETOBJECT: UINT   = 0x003D;
-const WM_DESTROY: UINT     = 0x0002;
-const WM_SIZE: UINT        = 0x0005;
-const WM_CLOSE: UINT       = 0x0010;
-const WM_PAINT: UINT       = 0x000F;
-const WM_KEYDOWN: UINT     = 0x0100;
-const WM_KEYUP: UINT       = 0x0101;
-const WM_CHAR: UINT        = 0x0102;
-const WM_MOUSEMOVE: UINT   = 0x0200;
-const WM_LBUTTONDOWN: UINT = 0x0201;
-const WM_LBUTTONUP: UINT   = 0x0202;
-const WM_RBUTTONDOWN: UINT = 0x0204;
-const WM_RBUTTONUP: UINT   = 0x0205;
-const WM_MOUSEWHEEL: UINT  = 0x020A;
+const WM_GETOBJECT: UINT          = 0x003D;
+const WM_DESTROY: UINT            = 0x0002;
+const WM_SIZE: UINT               = 0x0005;
+const WM_CLOSE: UINT              = 0x0010;
+const WM_PAINT: UINT              = 0x000F;
+const WM_KEYDOWN: UINT            = 0x0100;
+const WM_KEYUP: UINT              = 0x0101;
+const WM_CHAR: UINT               = 0x0102;
+const WM_MOUSEMOVE: UINT          = 0x0200;
+const WM_LBUTTONDOWN: UINT        = 0x0201;
+const WM_LBUTTONUP: UINT          = 0x0202;
+const WM_RBUTTONDOWN: UINT        = 0x0204;
+const WM_RBUTTONUP: UINT          = 0x0205;
+const WM_MOUSEWHEEL: UINT         = 0x020A;
+// IME messages
+const WM_IME_STARTCOMPOSITION: UINT = 0x010D;
+const WM_IME_ENDCOMPOSITION: UINT   = 0x010E;
+const WM_IME_COMPOSITION: UINT      = 0x010F;
+
+// IME composition string flags
+const GCS_COMPSTR:   DWORD = 0x0008; // current composition string
+const GCS_RESULTSTR: DWORD = 0x0800; // committed result string
 
 // Virtual keys for modifier detection
 const VK_SHIFT:   INT = 0x10;
@@ -187,6 +195,21 @@ extern "gdi32" fn BitBlt(
     hdcSrc: HDC, x1: INT, y1: INT, rop: DWORD,
 ) callconv(std.builtin.CallingConvention.winapi) BOOL;
 
+// ── imm32 — Input Method Manager ─────────────────────────────────────────────
+
+const HIMC = *opaque {};
+
+extern "imm32" fn ImmGetContext(hWnd: HWND) callconv(std.builtin.CallingConvention.winapi) ?HIMC;
+extern "imm32" fn ImmReleaseContext(hWnd: HWND, hIMC: HIMC) callconv(std.builtin.CallingConvention.winapi) BOOL;
+/// Returns the byte length of the requested IME string (when lp_buf is null)
+/// or fills lp_buf with at most dw_buf_len bytes and returns bytes written.
+extern "imm32" fn ImmGetCompositionStringW(
+    hIMC:     HIMC,
+    dwIndex:  DWORD,
+    lpBuf:    ?[*]u16,
+    dwBufLen: DWORD,
+) callconv(std.builtin.CallingConvention.winapi) LONG;
+
 // ── Window ───────────────────────────────────────────────────────────────────
 
 const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("zui_wnd");
@@ -211,6 +234,7 @@ pub const Window = struct {
     ev_buf:  [MAX_EVENTS]Event = undefined,
     ev_head: u32 = 0,
     ev_tail: u32 = 0,
+
 
     pub fn create(alloc: std.mem.Allocator, title: []const u8, width: u32, height: u32) !*Window {
         // Enable per-monitor DPI awareness so we render at native physical resolution.
@@ -366,6 +390,13 @@ pub const Window = struct {
         if (self.uia_tree) |tree| tree.update(nodes);
     }
 
+    /// Fire a UIA TextChanged event on the focused text widget.
+    /// Call this whenever the IME composition string changes so that screen
+    /// readers see the provisional text update in real time.
+    pub fn notifyImeCompositionChanged(self: *Window) void {
+        if (self.uia_tree) |tree| tree.notifyImeCompositionChanged();
+    }
+
     pub fn deinit(self: *Window, alloc: std.mem.Allocator) void {
         _ = DeleteObject(self.bitmap);
         _ = DeleteDC(self.dc_mem);
@@ -493,6 +524,64 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
                 if (cp >= 0x20 and cp != 0x7F) w.pushEvent(.{ .char_input = cp });
             }
         },
+
+        // ── IME / CJK composition ────────────────────────────────────────────
+        // WM_IME_STARTCOMPOSITION: the IME candidate window is opening.
+        // Let DefWindowProc create the default IME window so the candidate list
+        // and composition window are rendered by the OS.
+        WM_IME_STARTCOMPOSITION => {
+            // fall through to DefWindowProcW
+        },
+
+        // WM_IME_COMPOSITION: the composition string changed.
+        // lp carries a bitmask of which parts changed (GCS_COMPSTR = provisional,
+        // GCS_RESULTSTR = final committed result arriving via WM_CHAR too).
+        WM_IME_COMPOSITION => {
+            if (win) |w| {
+                const flags: DWORD = @truncate(@as(usize, @bitCast(lp)));
+                if ((flags & GCS_COMPSTR) != 0) {
+                    // Retrieve the current provisional composition string.
+                    if (ImmGetContext(hwnd)) |himc| {
+                        defer _ = ImmReleaseContext(hwnd, himc);
+                        // First call: get required buffer size in bytes.
+                        const byte_len = ImmGetCompositionStringW(himc, GCS_COMPSTR, null, 0);
+                        var utf8_buf: [384]u8 = undefined;
+                        var written: usize = 0;
+                        if (byte_len > 0) {
+                            // byte_len is the number of bytes for the UTF-16LE string.
+                            const u16_count: usize = @as(usize, @intCast(byte_len)) / 2;
+                            // Stack-allocate for up to 128 UTF-16 code units.
+                            // Real CJK compositions are typically 1–8 characters.
+                            var u16_buf: [128]u16 = undefined;
+                            const to_read = @min(u16_count, u16_buf.len);
+                            _ = ImmGetCompositionStringW(
+                                himc, GCS_COMPSTR,
+                                u16_buf[0..to_read].ptr,
+                                @intCast(to_read * 2),
+                            );
+                            written = std.unicode.utf16LeToUtf8(&utf8_buf, u16_buf[0..to_read]) catch 0;
+                        }
+                        // ImeCompositionEvent stores the string inline (no heap),
+                        // so ring-buffer lifetime equals event lifetime.
+                        w.pushEvent(.{ .ime_composition =
+                            event_mod.ImeCompositionEvent.fromSlice(utf8_buf[0..written]) });
+                    }
+                }
+                // GCS_RESULTSTR: the committed text will arrive as WM_CHAR message(s).
+                // No separate handling needed here.
+            }
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        },
+
+        // WM_IME_ENDCOMPOSITION: the IME session is closing.
+        // If the user cancelled (Escape) without committing, emit ime_cancel so
+        // widgets can clear their provisional composition display.  If they did
+        // commit, the WM_CHAR events already arrived, so we just clear state.
+        WM_IME_ENDCOMPOSITION => {
+            if (win) |w| w.pushEvent(.ime_cancel);
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        },
+
         else => {},
     }
     return DefWindowProcW(hwnd, msg, wp, lp);

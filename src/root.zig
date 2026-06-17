@@ -16,9 +16,10 @@ pub const Style       = @import("style/style.zig").Style;
 pub const Stylesheet  = @import("style/stylesheet.zig").Stylesheet;
 
 // Events
-pub const Event       = @import("events/event.zig").Event;
-pub const KeyCode     = @import("events/event.zig").KeyCode;
-pub const Modifiers   = @import("events/event.zig").Modifiers;
+pub const Event                = @import("events/event.zig").Event;
+pub const KeyCode              = @import("events/event.zig").KeyCode;
+pub const Modifiers            = @import("events/event.zig").Modifiers;
+pub const ImeCompositionEvent  = @import("events/event.zig").ImeCompositionEvent;
 
 // Layout
 pub const Rect        = @import("layout/geometry.zig").Rect;
