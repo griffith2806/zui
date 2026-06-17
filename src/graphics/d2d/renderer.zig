@@ -862,27 +862,25 @@ pub const Renderer = struct {
         // Use a fixed-size stack buffer; for large images fall back to allocating.
         const pixel_count = src_w * src_h;
 
-        // Stack buffer for images up to 512×512 (1MB).  Larger images use alloc.
+        // Stack buffer for images up to 512×512 (1 MB). Larger images use the
+        // page allocator for a temporary conversion buffer and free it immediately.
         const STACK_MAX: usize = 512 * 512;
         var stack_buf: [STACK_MAX]u32 = undefined;
+        const heap_buf: ?[]u32 = if (pixel_count > STACK_MAX)
+            std.heap.page_allocator.alloc(u32, pixel_count) catch return
+        else
+            null;
+        defer if (heap_buf) |h| std.heap.page_allocator.free(h);
 
-        // Large images (> 512×512) are skipped — would need an allocator.
-        // In practice the gallery images are small; this is a safe fallback.
-        if (pixel_count > STACK_MAX) return;
-
-        const bgra_slice: []u32 = blk: {
-            const s = stack_buf[0..pixel_count];
-            for (s, 0..pixel_count) |*dst_px, i| {
-                const src = pixels[i];
-                const a: u32 = (src >> 24) & 0xFF;
-                const r: u32 = (src >> 16) & 0xFF;
-                const g: u32 = (src >>  8) & 0xFF;
-                const b: u32 =  src        & 0xFF;
-                // BGRA: B in byte0, G in byte1, R in byte2, A in byte3
-                dst_px.* = b | (g << 8) | (r << 16) | (a << 24);
-            }
-            break :blk s;
-        };
+        const bgra_slice: []u32 = if (heap_buf) |h| h else stack_buf[0..pixel_count];
+        for (bgra_slice, 0..pixel_count) |*dst_px, i| {
+            const src = pixels[i];
+            const a: u32 = (src >> 24) & 0xFF;
+            const r: u32 = (src >> 16) & 0xFF;
+            const g: u32 = (src >>  8) & 0xFF;
+            const b: u32 =  src        & 0xFF;
+            dst_px.* = b | (g << 8) | (r << 16) | (a << 24);
+        }
 
         const bitmap_props = D2D1_BITMAP_PROPERTIES{
             .pixelFormat = .{
