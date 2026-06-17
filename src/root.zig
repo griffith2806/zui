@@ -32,6 +32,8 @@ pub const FlowLayout  = @import("layout/flow.zig").FlowLayout;
 
 // Signals
 pub fn Signal(comptime T: type) type { return @import("signals/signal.zig").Signal(T); }
+pub fn Property(comptime T: type) type { return @import("signals/property.zig").Property(T); }
+pub fn Computed(comptime T: type) type { return @import("signals/computed.zig").Computed(T); }
 
 // Core
 pub const Tween        = @import("core/animation.zig").Tween;

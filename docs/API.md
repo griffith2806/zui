@@ -77,6 +77,8 @@ zui.Menu              // popup context menu
 zui.Tooltip           // 0.5s hover delay tooltip
 // Signals
 zui.Signal(T)         // typed comptime-verified observer
+zui.Property(T)       // Signal-backed observable value with change suppression
+zui.Computed(T)       // cached derived value, recomputes when source Properties change
 // Events
 zui.Event             // union of all input events
 zui.KeyCode           // keyboard keys enum
@@ -786,6 +788,115 @@ try widget.signal.connect(alloc, &my_var,
 
 ---
 
+## Property(T)
+
+A Signal-backed observable value. Fires `changed` whenever the stored value transitions to a new value. Equal writes are silent no-ops.
+
+**Equality semantics** (resolved at comptime):
+- Slices (`[]T` / `[]const T`) — compared with `std.mem.eql`
+- All other types — compared with `==`
+
+**Allocation contract**: `init`/`get`/`set` never allocate. `bind` allocates one Signal slot. `deinit` frees the slot list.
+
+```zig
+pub fn Property(comptime T: type) type {
+    return struct {
+        value:   T,
+        changed: Signal(T),  // fired on every value change
+
+        pub fn init(initial: T) Property(T)
+        pub fn deinit(self: *Property(T), alloc: Allocator) void
+        pub fn get(self: *const Property(T)) T
+        pub fn set(self: *Property(T), new_val: T) void   // emits changed if value differs
+        pub fn bind(self: *Property(T), alloc: Allocator, target: *Property(T)) !void
+        // bind: one-directional; when self changes, target.set(value) is called
+    };
+}
+```
+
+**Basic usage**:
+```zig
+var volume: Property(f32) = Property(f32).init(0.5);
+defer volume.deinit(alloc);
+
+// React to changes
+_ = try volume.changed.connect(alloc, &my_slider, struct {
+    fn f(s: *Slider, v: f32) void { s.value = v; }
+}.f);
+
+volume.set(0.8);  // fires changed(0.8)
+volume.set(0.8);  // same value — silent, no emit
+```
+
+**One-directional binding**:
+```zig
+// When model.username changes, text_field_username is also updated
+try model.username.bind(alloc, &text_field_username);
+```
+
+**Disconnect**:
+```zig
+// Remove all slots bound to a specific ctx pointer:
+volume.changed.disconnect(alloc, &my_slider);
+// Or save the Connection handle from connect() and use disconnectHandle()
+```
+
+---
+
+## Computed(T)
+
+A lazily-evaluated derived value. Holds a cached result and recomputes via a user-supplied function when any registered source `Property` changes. No automatic dependency tracking — the user wires sources manually with `addSource()`.
+
+**Cache semantics**: The value is computed once at `init`, then cached. It is recomputed on the next `get()` call after any source emits `changed` (or after `invalidate()` is called manually).
+
+**Allocation contract**: `init`/`get`/`invalidate` never allocate. `addSource` allocates one Signal slot per source. `deinit` frees the slot list and disconnects all source listeners.
+
+```zig
+pub fn Computed(comptime T: type) type {
+    return struct {
+        pub fn init(ctx: *anyopaque, compute_fn: *const fn(*anyopaque) T) Computed(T)
+        pub fn deinit(self: *Computed(T), alloc: Allocator) void
+        pub fn get(self: *Computed(T)) T                   // returns cached value, recomputes if dirty
+        pub fn invalidate(self: *Computed(T)) void         // mark dirty; forces recompute on next get()
+        pub fn addSource(
+            self: *Computed(T),
+            alloc: Allocator,
+            source: anytype,               // *Property(S) for any S
+        ) !void
+    };
+}
+```
+
+**Usage**:
+```zig
+var first: Property([]const u8) = Property([]const u8).init("Ada");
+var last:  Property([]const u8) = Property([]const u8).init("Lovelace");
+
+const Ctx = struct { first: *Property([]const u8), last: *Property([]const u8) };
+var ctx = Ctx{ .first = &first, .last = &last };
+
+var full = Computed([]const u8).init(@ptrCast(&ctx), struct {
+    fn f(raw: *anyopaque) []const u8 {
+        const c: *Ctx = @ptrCast(@alignCast(raw));
+        return c.first.get();  // simplified; real impl joins strings
+    }
+}.f);
+try full.addSource(alloc, &first);
+try full.addSource(alloc, &last);
+defer full.deinit(alloc);
+
+_ = full.get();        // "Ada" — cached from init
+first.set("Grace");
+_ = full.get();        // recomputed — source change set dirty flag
+```
+
+**Notes**:
+- The source type `S` does not need to match `T`.
+- The `compute_fn` receives the opaque context; it reads the updated source values itself.
+- For mutable external state (non-Property), call `invalidate()` manually before `get()`.
+
+---
+
 ## Events
 
 ```zig
@@ -1014,6 +1125,8 @@ src/
     event.zig           ← Event, KeyCode, Modifiers
   signals/
     signal.zig          ← Signal(T)
+    property.zig        ← Property(T) — observable value, change-suppressing set
+    computed.zig        ← Computed(T) — lazily derived value from Property sources
   graphics/
     renderer.zig        ← comptime backend shim
     image.zig           ← Image type
