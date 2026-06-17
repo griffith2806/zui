@@ -9,11 +9,15 @@ pub const Role       = node_mod.Role;
 pub const State      = node_mod.State;
 
 // Style
-pub const Color       = @import("style/color.zig").Color;
-pub const Theme       = @import("style/theme.zig").Theme;
-pub const Font        = @import("style/font.zig").Font;
-pub const Style       = @import("style/style.zig").Style;
-pub const Stylesheet  = @import("style/stylesheet.zig").Stylesheet;
+pub const Color            = @import("style/color.zig").Color;
+pub const Theme            = @import("style/theme.zig").Theme;
+pub const Font             = @import("style/font.zig").Font;
+pub const Style            = @import("style/style.zig").Style;
+pub const Stylesheet       = @import("style/stylesheet.zig").Stylesheet;
+const pseudo_mod           = @import("style/pseudo.zig");
+pub const PseudoState      = pseudo_mod.PseudoState;
+pub const PseudoStateTag   = pseudo_mod.PseudoStateTag;
+pub const WidgetStylesheet = pseudo_mod.WidgetStylesheet;
 
 // Events
 pub const Event                = @import("events/event.zig").Event;
