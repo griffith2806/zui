@@ -87,6 +87,11 @@ pub fn build(b: *std.Build) void {
         exe.root_module.link_libc = true;
     }
 
+    // IME support on Windows requires imm32.
+    if (target.result.os.tag == .windows) {
+        exe.root_module.linkSystemLibrary("imm32", .{});
+    }
+
     b.installArtifact(exe);
 
     // This creates a top level step. Top level steps have a name and can be

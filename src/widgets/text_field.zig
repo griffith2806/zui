@@ -14,6 +14,10 @@ pub const TextField = struct {
     view_start: usize = 0,  // byte offset: scroll left until cursor is visible
     focused:    bool  = false,
     hovered:    bool  = false,
+    /// True while an IME composition session is active.
+    ime_active:  bool         = false,
+    /// Points into the last ime_composition event payload — NOT owned by TextField.
+    composition: []const u8  = "",
 
     pub fn deinit(self: *TextField, alloc: std.mem.Allocator) void {
         self.text.deinit(alloc);
@@ -65,7 +69,24 @@ pub const TextField = struct {
             else
                 "";
             const cursor_x = tx + @as(i32, @intCast(r.textWidth(pre)));
-            r.fillRect(Rect.init(cursor_x, ty, 1, 16), theme.fg);
+
+            if (self.ime_active and self.composition.len > 0) {
+                // Draw the in-progress composition string after the cursor position,
+                // in a dimmed color to indicate it is not yet committed.
+                const comp_color = Color.rgba(
+                    theme.fg.r / 2,
+                    theme.fg.g / 2,
+                    theme.fg.b / 2,
+                    theme.fg.a,
+                );
+                r.drawText(self.composition, cursor_x, ty, comp_color);
+                // Draw underline beneath the composition string.
+                const comp_w = r.textWidth(self.composition);
+                r.fillRect(Rect.init(cursor_x, ty + 15, comp_w, 1), comp_color);
+            } else {
+                // Normal blinking cursor (just a vertical bar).
+                r.fillRect(Rect.init(cursor_x, ty, 1, 16), theme.fg);
+            }
         }
     }
 
@@ -96,6 +117,23 @@ pub const TextField = struct {
                 const len = std.unicode.utf8Encode(cp, &buf) catch return false;
                 self.text.insertSlice(alloc, self.cursor, buf[0..len]) catch return false;
                 self.cursor += len;
+                return true;
+            },
+            .ime_start => {
+                if (!self.focused) return false;
+                self.ime_active = true;
+                self.composition = "";
+                return true;
+            },
+            .ime_composition => |c| {
+                if (!self.focused) return false;
+                self.composition = c.composition;
+                return true;
+            },
+            .ime_end => {
+                if (!self.focused) return false;
+                self.ime_active  = false;
+                self.composition = "";
                 return true;
             },
             .key_press => |k| {

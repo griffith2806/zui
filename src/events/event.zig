@@ -59,6 +59,15 @@ pub const ScrollEvent = struct {
     dy: f32,
 };
 
+pub const ImeComposition = struct {
+    /// The in-progress candidate string (UTF-8, heap-allocated, caller must free)
+    composition: []const u8,
+    /// The cursor position within the composition string (byte offset)
+    cursor: usize,
+    /// True when GCS_RESULTSTR is set — the composition is committed
+    committed: bool,
+};
+
 pub const Event = union(enum) {
     mouse_press: MouseEvent,
     mouse_release: MouseEvent,
@@ -72,6 +81,9 @@ pub const Event = union(enum) {
     paint: void,
     focus_gained: void,
     focus_lost: void,
+    ime_start: void,
+    ime_composition: ImeComposition,
+    ime_end: void,
 };
 
 test "MouseEvent field access" {

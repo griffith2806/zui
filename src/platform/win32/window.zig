@@ -9,6 +9,7 @@ comptime {
 }
 
 const Event = event_mod.Event;
+const ImeComposition = event_mod.ImeComposition;
 
 // ── Win32 types ─────────────────────────────────────────────────────────────
 
@@ -21,6 +22,7 @@ const HCURSOR   = *opaque {};
 const HICON     = *opaque {};
 const HMENU     = *opaque {};
 const HANDLE    = *anyopaque;
+const HIMC      = *opaque {};
 
 const BOOL     = i32;
 const DWORD    = u32;
@@ -122,6 +124,19 @@ const WM_RBUTTONDOWN: UINT = 0x0204;
 const WM_RBUTTONUP: UINT   = 0x0205;
 const WM_MOUSEWHEEL: UINT  = 0x020A;
 
+// IME window messages
+const WM_IME_STARTCOMPOSITION: UINT = 0x010D;
+const WM_IME_ENDCOMPOSITION:   UINT = 0x010E;
+const WM_IME_COMPOSITION:      UINT = 0x010F;
+
+// IME composition string type flags (lParam for WM_IME_COMPOSITION)
+const GCS_COMPSTR:   LPARAM = 0x0008;
+const GCS_RESULTSTR: LPARAM = 0x0800;
+
+// ImmGetCompositionStringW index constants
+const GCS_COMPSTR_INDEX: DWORD   = 0x0008;
+const GCS_RESULTSTR_INDEX: DWORD = 0x0800;
+
 // Virtual keys for modifier detection
 const VK_SHIFT:   INT = 0x10;
 const VK_CONTROL: INT = 0x11;
@@ -138,6 +153,19 @@ const DWMWCP_ROUND:       DWORD = 2;
 const DWMSBT_MAINWINDOW:  DWORD = 2;
 
 extern "dwmapi" fn DwmSetWindowAttribute(hwnd: HWND, dwAttr: DWORD, pv: *const anyopaque, cbAttr: DWORD) callconv(std.builtin.CallingConvention.winapi) HRESULT;
+
+// ── IMM32 function declarations ──────────────────────────────────────────────
+
+extern "imm32" fn ImmGetContext(hWnd: HWND) callconv(std.builtin.CallingConvention.winapi) ?HIMC;
+extern "imm32" fn ImmReleaseContext(hWnd: HWND, hIMC: HIMC) callconv(std.builtin.CallingConvention.winapi) BOOL;
+/// Returns the byte length (when buf/bufLen == null/0) or fills buf and returns byte count.
+/// dwIndex is the GCS_* constant selecting which string to retrieve.
+extern "imm32" fn ImmGetCompositionStringW(
+    hIMC: HIMC,
+    dwIndex: DWORD,
+    lpBuf: ?[*]u8,
+    dwBufLen: DWORD,
+) callconv(std.builtin.CallingConvention.winapi) LONG;
 
 // ── Win32 function declarations ──────────────────────────────────────────────
 
@@ -207,6 +235,10 @@ pub const Window = struct {
     should_close: bool = false,
     size_changed: bool = false,
     uia_tree:     ?*uia_mod.UiaTree = null,
+    /// Allocator used for IME composition string buffers.
+    alloc: std.mem.Allocator = undefined,
+    /// Current IME composition buffer (allocated; freed when replaced or on ime_end).
+    ime_buf: ?[]u8 = null,
 
     ev_buf:  [MAX_EVENTS]Event = undefined,
     ev_head: u32 = 0,
@@ -297,6 +329,7 @@ pub const Window = struct {
             .width     = phys_w,
             .height    = phys_h,
             .dpi_scale = dpi_scale,
+            .alloc     = alloc,
         };
         _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, @bitCast(@intFromPtr(win)));
         _ = ShowWindow(hwnd, SW_SHOW);
@@ -367,6 +400,7 @@ pub const Window = struct {
     }
 
     pub fn deinit(self: *Window, alloc: std.mem.Allocator) void {
+        if (self.ime_buf) |buf| { alloc.free(buf); self.ime_buf = null; }
         _ = DeleteObject(self.bitmap);
         _ = DeleteDC(self.dc_mem);
         _ = DeleteObject(self.bm_comp);
@@ -492,6 +526,96 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
                 const cp: u21 = @truncate(wp);
                 if (cp >= 0x20 and cp != 0x7F) w.pushEvent(.{ .char_input = cp });
             }
+        },
+        WM_IME_STARTCOMPOSITION => {
+            if (win) |w| w.pushEvent(.ime_start);
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        },
+        WM_IME_ENDCOMPOSITION => {
+            if (win) |w| {
+                // Free any pending composition buffer.
+                if (w.ime_buf) |buf| { w.alloc.free(buf); w.ime_buf = null; }
+                w.pushEvent(.ime_end);
+            }
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        },
+        WM_IME_COMPOSITION => {
+            if (win) |w| {
+                const himc = ImmGetContext(hwnd) orelse return DefWindowProcW(hwnd, msg, wp, lp);
+                defer _ = ImmReleaseContext(hwnd, himc);
+
+                const has_result = (lp & GCS_RESULTSTR) != 0;
+                const has_comp   = (lp & GCS_COMPSTR)   != 0;
+
+                if (has_result) {
+                    // Committed string — convert UTF-16LE → codepoints → char_input events.
+                    const byte_len = ImmGetCompositionStringW(himc, GCS_RESULTSTR_INDEX, null, 0);
+                    if (byte_len > 0) {
+                        const n_u16: usize = @intCast(@divTrunc(byte_len, 2));
+                        const u16_buf = w.alloc.alloc(u16, n_u16) catch {
+                            return DefWindowProcW(hwnd, msg, wp, lp);
+                        };
+                        defer w.alloc.free(u16_buf);
+                        _ = ImmGetCompositionStringW(himc, GCS_RESULTSTR_INDEX,
+                            @as([*]u8, @ptrCast(u16_buf.ptr)), @intCast(byte_len));
+                        // Walk the UTF-16 buffer and emit each codepoint.
+                        var i: usize = 0;
+                        while (i < u16_buf.len) {
+                            const hi = u16_buf[i];
+                            i += 1;
+                            var cp: u21 = hi;
+                            // Surrogate pair?
+                            if (hi >= 0xD800 and hi <= 0xDBFF and i < u16_buf.len) {
+                                const lo = u16_buf[i];
+                                if (lo >= 0xDC00 and lo <= 0xDFFF) {
+                                    cp = 0x10000 + (@as(u21, hi - 0xD800) << 10) + (lo - 0xDC00);
+                                    i += 1;
+                                }
+                            }
+                            if (cp >= 0x20 and cp != 0x7F) w.pushEvent(.{ .char_input = cp });
+                        }
+                    }
+                    // Clear composition buffer and signal IME end.
+                    if (w.ime_buf) |buf| { w.alloc.free(buf); w.ime_buf = null; }
+                    w.pushEvent(.ime_end);
+                } else if (has_comp) {
+                    // In-progress composition — get UTF-16LE string and convert to UTF-8.
+                    const byte_len = ImmGetCompositionStringW(himc, GCS_COMPSTR_INDEX, null, 0);
+                    if (byte_len > 0) {
+                        const n_u16: usize = @intCast(@divTrunc(byte_len, 2));
+                        const u16_buf = w.alloc.alloc(u16, n_u16) catch {
+                            return DefWindowProcW(hwnd, msg, wp, lp);
+                        };
+                        defer w.alloc.free(u16_buf);
+                        _ = ImmGetCompositionStringW(himc, GCS_COMPSTR_INDEX,
+                            @as([*]u8, @ptrCast(u16_buf.ptr)), @intCast(byte_len));
+
+                        // utf16LeToUtf8Alloc owns the returned slice; we adopt it.
+                        const utf8_buf = std.unicode.utf16LeToUtf8Alloc(w.alloc, u16_buf) catch {
+                            return DefWindowProcW(hwnd, msg, wp, lp);
+                        };
+
+                        // Replace the previous composition buffer.
+                        if (w.ime_buf) |old| w.alloc.free(old);
+                        w.ime_buf = utf8_buf;
+
+                        w.pushEvent(.{ .ime_composition = .{
+                            .composition = utf8_buf,
+                            .cursor      = utf8_buf.len,  // cursor after last byte by default
+                            .committed   = false,
+                        }});
+                    } else {
+                        // Empty composition string — clear and emit empty event.
+                        if (w.ime_buf) |buf| { w.alloc.free(buf); w.ime_buf = null; }
+                        w.pushEvent(.{ .ime_composition = .{
+                            .composition = "",
+                            .cursor      = 0,
+                            .committed   = false,
+                        }});
+                    }
+                }
+            }
+            return DefWindowProcW(hwnd, msg, wp, lp);
         },
         else => {},
     }
