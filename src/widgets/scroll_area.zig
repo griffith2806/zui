@@ -2,6 +2,7 @@ const std      = @import("std");
 const Color    = @import("../style/color.zig").Color;
 const Rect     = @import("../layout/geometry.zig").Rect;
 const Size     = @import("../layout/geometry.zig").Size;
+const Point    = @import("../layout/geometry.zig").Point;
 const Renderer = @import("../graphics/renderer.zig").Renderer;
 const Event    = @import("../events/event.zig").Event;
 
@@ -103,7 +104,7 @@ pub const ScrollArea = struct {
                 return true;
             },
             .mouse_move => |m| {
-                const pt = .{ .x = m.x, .y = m.y };
+                const pt = Point{ .x = m.x, .y = m.y };
                 self.thumb_hovered = if (self.thumbRect(rect)) |thumb| thumb.contains(pt) else false;
                 if (self.dragging) {
                     const new_offset = self.drag_start_offset + @as(i32, @intFromFloat(
@@ -119,7 +120,7 @@ pub const ScrollArea = struct {
             },
             .mouse_press => |m| {
                 if (m.button == .left) {
-                    const pt = .{ .x = m.x, .y = m.y };
+                    const pt = Point{ .x = m.x, .y = m.y };
                     if (self.thumbRect(rect)) |thumb| {
                         if (thumb.contains(pt)) {
                             self.dragging = true;

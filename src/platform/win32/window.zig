@@ -43,6 +43,14 @@ const WNDPROC = *const fn (HWND, UINT, WPARAM, LPARAM) callconv(std.builtin.Call
 const POINT = extern struct { x: LONG, y: LONG };
 const RECT  = extern struct { left: LONG, top: LONG, right: LONG, bottom: LONG };
 
+const MINMAXINFO = extern struct {
+    ptReserved:     POINT,
+    ptMaxSize:      POINT,
+    ptMaxPosition:  POINT,
+    ptMinTrackSize: POINT,
+    ptMaxTrackSize: POINT,
+};
+
 const MSG = extern struct {
     hwnd:    ?HWND,
     message: UINT,
@@ -124,6 +132,7 @@ const WM_LBUTTONUP: UINT          = 0x0202;
 const WM_RBUTTONDOWN: UINT        = 0x0204;
 const WM_RBUTTONUP: UINT          = 0x0205;
 const WM_MOUSEWHEEL: UINT         = 0x020A;
+const WM_GETMINMAXINFO: UINT      = 0x0024;
 // IME messages
 const WM_IME_STARTCOMPOSITION: UINT = 0x010D;
 const WM_IME_ENDCOMPOSITION: UINT   = 0x010E;
@@ -193,6 +202,7 @@ const IDC_ARROW: [*:0]const u16 = @ptrFromInt(32512);
 
 extern "user32" fn SetProcessDpiAwarenessContext(value: isize) callconv(std.builtin.CallingConvention.winapi) BOOL;
 extern "user32" fn GetDpiForSystem() callconv(std.builtin.CallingConvention.winapi) UINT;
+extern "user32" fn GetDpiForWindow(hwnd: HWND) callconv(std.builtin.CallingConvention.winapi) UINT;
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 
 extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(std.builtin.CallingConvention.winapi) ?HDC;
@@ -480,6 +490,22 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
                 }
             }
             return DefWindowProcW(hwnd, msg, wp, lp);
+        },
+        WM_GETMINMAXINFO => {
+            // Enforce a minimum client area of 900×600 logical pixels, scaled by DPI.
+            const dpi = GetDpiForWindow(hwnd);
+            const scale: f32 = @as(f32, @floatFromInt(if (dpi > 0) dpi else 96)) / 96.0;
+            const min_logical_w: i32 = 900;
+            const min_logical_h: i32 = 600;
+            const min_phys_w: LONG = @intFromFloat(@round(@as(f32, @floatFromInt(min_logical_w)) * scale));
+            const min_phys_h: LONG = @intFromFloat(@round(@as(f32, @floatFromInt(min_logical_h)) * scale));
+            // Account for window chrome (title bar + borders) via AdjustWindowRect.
+            var wr = RECT{ .left = 0, .top = 0, .right = min_phys_w, .bottom = min_phys_h };
+            _ = AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
+            const mmi: *MINMAXINFO = @ptrFromInt(@as(usize, @bitCast(lp)));
+            mmi.ptMinTrackSize.x = wr.right - wr.left;
+            mmi.ptMinTrackSize.y = wr.bottom - wr.top;
+            return 0;
         },
         WM_CLOSE => {
             if (win) |w| { w.should_close = true; w.pushEvent(.close); }
