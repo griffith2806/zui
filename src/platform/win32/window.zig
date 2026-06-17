@@ -133,19 +133,6 @@ const WM_IME_COMPOSITION: UINT      = 0x010F;
 const GCS_COMPSTR:   DWORD = 0x0008; // current composition string
 const GCS_RESULTSTR: DWORD = 0x0800; // committed result string
 
-// IME window messages
-const WM_IME_STARTCOMPOSITION: UINT = 0x010D;
-const WM_IME_ENDCOMPOSITION:   UINT = 0x010E;
-const WM_IME_COMPOSITION:      UINT = 0x010F;
-
-// IME composition string type flags (lParam for WM_IME_COMPOSITION)
-const GCS_COMPSTR:   LPARAM = 0x0008;
-const GCS_RESULTSTR: LPARAM = 0x0800;
-
-// ImmGetCompositionStringW index constants
-const GCS_COMPSTR_INDEX: DWORD   = 0x0008;
-const GCS_RESULTSTR_INDEX: DWORD = 0x0800;
-
 // Virtual keys for modifier detection
 const VK_SHIFT:   INT = 0x10;
 const VK_CONTROL: INT = 0x11;
@@ -224,20 +211,6 @@ extern "gdi32" fn BitBlt(
     hdcSrc: HDC, x1: INT, y1: INT, rop: DWORD,
 ) callconv(std.builtin.CallingConvention.winapi) BOOL;
 
-// ── imm32 — Input Method Manager ─────────────────────────────────────────────
-
-const HIMC = *opaque {};
-
-extern "imm32" fn ImmGetContext(hWnd: HWND) callconv(std.builtin.CallingConvention.winapi) ?HIMC;
-extern "imm32" fn ImmReleaseContext(hWnd: HWND, hIMC: HIMC) callconv(std.builtin.CallingConvention.winapi) BOOL;
-/// Returns the byte length of the requested IME string (when lp_buf is null)
-/// or fills lp_buf with at most dw_buf_len bytes and returns bytes written.
-extern "imm32" fn ImmGetCompositionStringW(
-    hIMC:     HIMC,
-    dwIndex:  DWORD,
-    lpBuf:    ?[*]u16,
-    dwBufLen: DWORD,
-) callconv(std.builtin.CallingConvention.winapi) LONG;
 
 // ── Window ───────────────────────────────────────────────────────────────────
 
@@ -351,7 +324,6 @@ pub const Window = struct {
             .width     = phys_w,
             .height    = phys_h,
             .dpi_scale = dpi_scale,
-            .alloc     = alloc,
         };
         _ = SetWindowLongPtrW(hwnd, GWLP_USERDATA, @bitCast(@intFromPtr(win)));
         _ = ShowWindow(hwnd, SW_SHOW);
@@ -593,7 +565,7 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
                             var u16_buf: [128]u16 = undefined;
                             const to_read = @min(u16_count, u16_buf.len);
                             _ = ImmGetCompositionStringW(himc, GCS_COMPSTR,
-                                u16_buf[0..to_read].ptr, @intCast(to_read * 2));
+                                @ptrCast(u16_buf[0..to_read].ptr), @intCast(to_read * 2));
                             written = std.unicode.utf16LeToUtf8(&utf8_buf, u16_buf[0..to_read]) catch 0;
                         }
                         w.pushEvent(.{ .ime_composition =
