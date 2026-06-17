@@ -260,8 +260,9 @@ def test_new_widgets(win, r):
     print("\n[New Widgets]")
     nav(win, "New Widgets", r)
 
-    # NumberInput widgets (UIA role = Slider)
-    r.assert_exists(win, "NumberInput", "Slider")
+    # NumberInput widgets (UIA role = Slider) — two instances with distinct names
+    r.assert_exists(win, "NumberInput Integer", "Slider")
+    r.assert_exists(win, "NumberInput Float",   "Slider")
 
     # TreeView (UIA role = List)
     r.assert_exists(win, "Tree", "List")

@@ -1458,11 +1458,11 @@ fn buildAccessibilityTree(
             const lx2 = cx(); const base2 = cy();
             const rx2: i32 = lx2 + 420;
             if (n < nodes.len) {
-                nodes[n] = new_widgets_st.num_int.accessNode(zui.Rect.init(lx2, base2 + 40, 160, 34));
+                nodes[n] = new_widgets_st.num_int.accessNode(zui.Rect.init(lx2, base2 + 40, 160, 34), "NumberInput Integer");
                 n += 1;
             }
             if (n < nodes.len) {
-                nodes[n] = new_widgets_st.num_float.accessNode(zui.Rect.init(lx2, base2 + 110, 160, 34));
+                nodes[n] = new_widgets_st.num_float.accessNode(zui.Rect.init(lx2, base2 + 110, 160, 34), "NumberInput Float");
                 n += 1;
             }
             if (n < nodes.len) {

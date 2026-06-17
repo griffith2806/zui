@@ -143,10 +143,10 @@ pub const NumberInput = struct {
         }
     }
 
-    pub fn accessNode(self: *const NumberInput, rect: Rect) AccessNode {
+    pub fn accessNode(self: *const NumberInput, rect: Rect, name: [:0]const u8) AccessNode {
         return .{
             .role   = .slider,
-            .name   = "NumberInput",
+            .name   = name,
             .bounds = rect,
             .state  = .{ .focused = self.focused, .enabled = true },
         };
