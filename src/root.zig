@@ -56,6 +56,7 @@ pub const ProgressBar = @import("widgets/progress_bar.zig").ProgressBar;
 pub const TabView     = @import("widgets/tab_view.zig").TabView;
 pub const ScrollArea  = @import("widgets/scroll_area.zig").ScrollArea;
 pub const ListView    = @import("widgets/list_view.zig").ListView;
+pub const DataSource  = @import("widgets/list_view.zig").DataSource;
 pub const DropDown    = @import("widgets/dropdown.zig").DropDown;
 pub const Tooltip     = @import("widgets/tooltip.zig").Tooltip;
 pub const Dialog      = @import("widgets/dialog.zig").Dialog;

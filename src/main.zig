@@ -55,6 +55,7 @@ const EASE_COLORS = [4]zui.Color{
 
 // ── Shared sample data ────────────────────────────────────────────────────────
 const LANG_ITEMS = [_][]const u8{ "Zig", "Rust", "C", "C++", "Go", "Swift", "Kotlin", "Python" };
+const LANG_SLICE: []const []const u8 = &LANG_ITEMS;
 const TAB_LABELS = [_][]const u8{ "Accent", "Standard", "Ghost" };
 const MENU_ITEMS = [_]zui.MenuItem{
     .{ .label = "New File" },
@@ -219,7 +220,7 @@ const ControlsState = struct {
 // ══════════════════════════════════════════════════════════════════════════════
 const InputsState = struct {
     text_area: zui.TextArea,
-    list_view: zui.ListView = .{ .items = &LANG_ITEMS },
+    list_view: zui.ListView = zui.ListView.fromSlice(&LANG_SLICE),
     dropdown:  zui.DropDown = .{ .items = &LANG_ITEMS },
 
     pub fn init(alloc: std.mem.Allocator) !InputsState {
