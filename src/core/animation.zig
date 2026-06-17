@@ -14,6 +14,7 @@ pub const Tween = struct {
 
     pub fn set(self: *Tween, target: f32) void { self.target = target; }
     pub fn snap(self: *Tween, v: f32) void { self.value = v; self.target = v; }
+    pub fn isSettled(self: *const Tween) bool { return @abs(self.value - self.target) < 0.005; }
 };
 
 pub fn easeOut(t: f32) f32 {

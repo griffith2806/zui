@@ -728,42 +728,34 @@ pub const Renderer = struct {
     }
 
     /// Draw text at an integer scale (1=14pt, 2=22pt, 3=32pt …).
+    /// Uses ID2D1RenderTarget::DrawText directly — no IDWriteTextLayout allocation,
+    /// eliminating ~50 COM alloc/release pairs per frame at 60 fps.
     pub fn drawTextScaled(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
         if (!self.begin_draw_called) return;
         const idx = @min(scale, NUM_FONT_SCALES - 1);
         const fmt = self.text_formats[idx] orelse return;
 
-        // UTF-8 → UTF-16
         var wbuf: [2048]u16 = undefined;
         const wlen = std.unicode.utf8ToUtf16Le(&wbuf, text) catch return;
         if (wlen == 0) return;
 
-        // Create a text layout for precise placement
-        var layout_raw: ?*anyopaque = null;
-        const hr_lay = self.dwrite.vtbl.CreateTextLayout(
-            @ptrCast(self.dwrite),
+        // Large layout rect — DrawText clips to it, but we don't want wrapping.
+        const layout_rect = D2D1_RECT_F{
+            .left   = toDip(x),
+            .top    = toDip(y),
+            .right  = toDip(x) + 10000.0,
+            .bottom = toDip(y) + 10000.0,
+        };
+        self.setBrushColor(color);
+        self.render_target.vtbl.DrawText(
+            @ptrCast(self.render_target),
             wbuf[0..wlen].ptr,
             @intCast(wlen),
             @ptrCast(fmt),
-            10000.0, // large max width — no wrapping
-            10000.0, // large max height
-            &layout_raw,
-        );
-        if (hr_lay != S_OK or layout_raw == null) return;
-        const layout: *IDWriteTextLayoutFace = @ptrCast(@alignCast(layout_raw.?));
-        defer _ = layout.vtbl.Release(@ptrCast(layout));
-
-        const origin = D2D1_POINT_2F{
-            .x = toDip(x),
-            .y = toDip(y),
-        };
-        self.setBrushColor(color);
-        self.render_target.vtbl.DrawTextLayout(
-            @ptrCast(self.render_target),
-            origin,
-            @ptrCast(layout),
+            &layout_rect,
             @ptrCast(self.brush),
             D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
         );
     }
 

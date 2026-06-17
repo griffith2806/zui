@@ -887,6 +887,7 @@ pub fn main(init: std.process.Init) !void {
     var dark_mode      = true;
     var about_expanded = false;
     var redraw_cnt: u32 = 3; // frames to draw; set on events/animations
+    var uia_dirty      = true; // rebuild accessibility tree once per meaningful event
 
     var controls = ControlsState{};
     try controls.init(alloc, &dark_mode);
@@ -925,12 +926,14 @@ pub fn main(init: std.process.Init) !void {
         const win_rect = zui.Rect.init(0, 0, W, H);
 
         // ── Events ──────────────────────────────────────────────────────────
-        var got_event = false;
+        var got_event   = false;
+        var heavy_event = false; // non-mouse-move: triggers full 30-frame redraw + UIA rebuild
         while (app.pollEvent()) |ev| {
             got_event = true;
             switch (ev) {
                 .close     => app.window.should_close = true,
                 .key_press => |k| {
+                    heavy_event = true;
                     if (k.key == .escape and
                         !overlays.dialog.visible and
                         !overlays.menu.open and
@@ -940,18 +943,23 @@ pub fn main(init: std.process.Init) !void {
                 .mouse_move => |m| {
                     for (nav_rects, 0..) |nr, i|
                         nav_hovered[i] = nr.contains(.{ .x = m.x, .y = m.y });
+                    // mouse_move is a light event: 2 frames to animate hover highlight.
+                    // heavy_event stays false so UIA is not re-published on every pixel.
                 },
                 .mouse_press => |m| {
+                    heavy_event = true;
                     for (NAV_ITEMS, 0..) |item, i| {
                         if (m.button == .left and nav_rects[i].contains(.{ .x = m.x, .y = m.y }))
                             page = item.page;
                     }
                 },
-                .resize => |sz| { W = sz.width; H = sz.height; },
-                // Notify UIA when the IME composition string changes so screen
-                // readers (Narrator, NVDA, JAWS) can announce the provisional text.
-                .ime_composition => app.notifyImeCompositionChanged(),
-                else => {},
+                .mouse_release => { heavy_event = true; },
+                .resize => |sz| { W = sz.width; H = sz.height; heavy_event = true; },
+                .ime_composition => {
+                    app.notifyImeCompositionChanged();
+                    heavy_event = true;
+                },
+                else => { heavy_event = true; },
             }
             switch (page) {
                 .controls     => controls.handleEvent(ev, alloc),
@@ -974,7 +982,13 @@ pub fn main(init: std.process.Init) !void {
             }
         }
 
-        if (got_event) redraw_cnt = 30;
+        // Mouse moves get 2 frames (hover interpolation); anything heavier gets 30.
+        if (heavy_event) {
+            redraw_cnt = 30;
+            uia_dirty  = true;
+        } else if (got_event) {
+            redraw_cnt = @max(redraw_cnt, 2);
+        }
 
         // ── Update ──────────────────────────────────────────────────────────
         app.syncSize();
@@ -991,8 +1005,16 @@ pub fn main(init: std.process.Init) !void {
                               (1.0 - @exp(-10.0 * dt_s));
         }
 
-        // Pages with continuously running animations force redraws beyond events
-        if (page == .controls) redraw_cnt = @max(redraw_cnt, 1);
+        // Pages with continuously running animations force redraws beyond events.
+        // Controls: progress bar cycles every 5 s; only hold redraw during rise phase
+        // or while button hover tweens are settling.
+        if (page == .controls) {
+            const btn_anim = !controls.btn_inc.hover_t.isSettled() or
+                             !controls.btn_reset.hover_t.isSettled() or
+                             !controls.btn_theme.hover_t.isSettled();
+            if (btn_anim or controls.pb_time < 4.0)
+                redraw_cnt = @max(redraw_cnt, 1);
+        }
         if (page == .overlays and overlays.tip_hovered) redraw_cnt = @max(redraw_cnt, 2);
         if (page == .animations) {
             var anim_live = !animations.ball_x.isSettled() or !animations.ball_y.isSettled() or
@@ -1027,8 +1049,12 @@ pub fn main(init: std.process.Init) !void {
 
             app.present();
 
-            // Publish current widget positions to UIA / screen readers.
-            buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, &images, &data_binding, &file_dialogs, about_expanded, &nav_rects, alloc);
+            // Publish widget positions to UIA only when something accessibility-
+            // relevant changed (page nav, clicks, key events) — not on every repaint.
+            if (uia_dirty) {
+                buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, &images, &data_binding, &file_dialogs, about_expanded, &nav_rects, alloc);
+                uia_dirty = false;
+            }
         }
         app.capFps(60);
     }
