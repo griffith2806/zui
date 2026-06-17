@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const event_mod = @import("../../events/event.zig");
 const uia_mod  = @import("uia.zig");
 const node_mod = @import("../../accessibility/node.zig");
+const drop_mod = @import("drop_target.zig");
 
 comptime {
     if (builtin.os.tag != .windows) @compileError("win32 platform backend is Windows-only");
@@ -207,6 +208,7 @@ pub const Window = struct {
     should_close: bool = false,
     size_changed: bool = false,
     uia_tree:     ?*uia_mod.UiaTree = null,
+    drop_target:  ?*drop_mod.DropTarget = null,
 
     ev_buf:  [MAX_EVENTS]Event = undefined,
     ev_head: u32 = 0,
@@ -310,6 +312,13 @@ pub const Window = struct {
         const corners: DWORD = DWMWCP_ROUND;
         _ = DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, @as(*const anyopaque, @ptrCast(&corners)), @sizeOf(DWORD));
 
+        // Register as an OLE drop target so the window can accept file/text drops.
+        const eq = drop_mod.EventQueue{
+            .ptr     = @ptrCast(win),
+            .push_fn = windowPushEvent,
+        };
+        win.drop_target = drop_mod.DropTarget.create(alloc, @ptrCast(hwnd), eq) catch null;
+
         return win;
     }
 
@@ -367,6 +376,11 @@ pub const Window = struct {
     }
 
     pub fn deinit(self: *Window, alloc: std.mem.Allocator) void {
+        // Revoke drop target before destroying the window.
+        if (self.drop_target) |dt| {
+            dt.destroy();
+            self.drop_target = null;
+        }
         _ = DeleteObject(self.bitmap);
         _ = DeleteDC(self.dc_mem);
         _ = DeleteObject(self.bm_comp);
@@ -414,6 +428,13 @@ pub const Window = struct {
         self.ev_tail +%= 1;
     }
 };
+
+/// Trampoline used by DropTarget.EventQueue — erases Window type without
+/// importing this file from drop_target.zig (which would create a circular dep).
+fn windowPushEvent(ptr: *anyopaque, ev: Event) void {
+    const win: *Window = @ptrCast(@alignCast(ptr));
+    win.pushEvent(ev);
+}
 
 fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.CallingConvention.winapi) LRESULT {
     const raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA);

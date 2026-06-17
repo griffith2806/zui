@@ -59,6 +59,27 @@ pub const ScrollEvent = struct {
     dy: f32,
 };
 
+/// Payload delivered on `drag_enter` and `drop` events.
+///
+/// Memory ownership: the `files` slice, each file string within it, and `text`
+/// are all allocated from a single `std.heap.ArenaAllocator` that lives inside
+/// the platform's DropTarget. The event consumer **must not** hold pointers to
+/// these slices across event loop iterations. If long-term storage is needed,
+/// copy the data before returning from the event handler. The platform frees the
+/// arena automatically before each new drag sequence begins.
+pub const DragPayload = struct {
+    /// UTF-8 file paths dropped (empty slice when no files were dropped).
+    files: []const []const u8,
+    /// UTF-8 text content dropped (empty string when no text was dropped).
+    text: []const u8,
+    /// Client-area position of the drop point (logical pixels).
+    x: i32,
+    y: i32,
+};
+
+/// Position-only payload delivered on `drag_over`.
+pub const DragPosition = struct { x: i32, y: i32 };
+
 pub const Event = union(enum) {
     mouse_press: MouseEvent,
     mouse_release: MouseEvent,
@@ -72,6 +93,15 @@ pub const Event = union(enum) {
     paint: void,
     focus_gained: void,
     focus_lost: void,
+    /// A dragged object entered the window. `DragPayload.files` and `.text`
+    /// are populated with a preview of what will be dropped.
+    drag_enter: DragPayload,
+    /// The drag cursor moved while hovering over the window.
+    drag_over: DragPosition,
+    /// The drag left the window without a drop.
+    drag_leave: void,
+    /// The user released the mouse and completed a drop into the window.
+    drop: DragPayload,
 };
 
 test "MouseEvent field access" {
@@ -93,4 +123,15 @@ test "Modifiers default" {
     const mods = Modifiers{};
     try std.testing.expect(!mods.shift);
     try std.testing.expect(!mods.ctrl);
+}
+
+test "DragPayload fields" {
+    const payload = DragPayload{
+        .files = &.{},
+        .text  = "",
+        .x     = 100,
+        .y     = 200,
+    };
+    try std.testing.expectEqual(@as(usize, 0), payload.files.len);
+    try std.testing.expectEqual(@as(i32, 100), payload.x);
 }

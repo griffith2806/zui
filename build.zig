@@ -86,6 +86,11 @@ pub fn build(b: *std.Build) void {
         exe.root_module.linkSystemLibrary("X11", .{});
         exe.root_module.link_libc = true;
     }
+    // On Windows, the drag-and-drop backend requires OLE and Shell APIs.
+    if (target.result.os.tag == .windows) {
+        exe.root_module.linkSystemLibrary("ole32", .{});
+        exe.root_module.linkSystemLibrary("shell32", .{});
+    }
 
     b.installArtifact(exe);
 
