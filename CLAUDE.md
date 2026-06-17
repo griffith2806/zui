@@ -11,6 +11,15 @@ zig build test         # Run all tests (module + exe tests, in parallel)
 zig build --help       # Full option menu
 ```
 
+### Quick live testing (Claude sessions)
+
+```powershell
+.\launch.ps1           # Build + kill any old instance + launch fresh
+.\launch.ps1 -NoBuild  # Launch last build without rebuilding (faster iteration)
+```
+
+Use `launch.ps1` before calling any `mcp__ui-automation__*` tool to get a clean, up-to-date app window. Combine with `zig build --watch` in a second terminal for continuous rebuild on save.
+
 Minimum Zig version: **0.16.0**
 
 ## Repository Layout
