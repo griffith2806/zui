@@ -1,6 +1,6 @@
 # Widgets Progress
 
-## Status: Complete (M12/M13 + gap-close)
+## Status: Complete (M12/M13 + gap-close + new widgets)
 
 ### Done
 - Label, Button (ButtonStyle), TextField, Container, Checkbox, Slider — all previous
@@ -13,6 +13,10 @@
 - Tooltip (`src/widgets/tooltip.zig`) — hover-delay popup, auto-position, window-edge clamping
 - Dialog (`src/widgets/dialog.zig`) — modal overlay, OK/Cancel signals, Escape closes
 - Menu (`src/widgets/menu.zig`) — MenuItem list, separators, enabled/disabled, Signal(usize) selected, key nav
+- NumberInput (`src/widgets/number_input.zig`) — spinbox with +/- buttons, arrow key support, Signal(f64) changed
+- TreeView (`src/widgets/tree_view.zig`) — hierarchical list, expand/collapse, flat data model with depth field
+- DatePicker (`src/widgets/date_picker.zig`) — three linked dropdowns (day/month/year), leap year handling
+- New Widgets gallery page in main.zig — all four widgets with labels and live interaction demos
 
 ### In Progress
 _(nothing)_
