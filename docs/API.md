@@ -84,6 +84,8 @@ zui.Property(T)       // Signal-backed observable value with change suppression
 zui.Computed(T)       // cached derived value, recomputes when source Properties change
 // Events
 zui.Event             // union of all input events
+zui.DragPayload       // files + text + position for drag_enter / drop events
+zui.DragPosition      // x/y for drag_over events
 zui.KeyCode           // keyboard keys enum
 // Animation (new — spring/easing based)
 zui.Animated          // f32 spring/ease animation
@@ -1013,26 +1015,20 @@ pub const Event = union(enum) {
     mouse_move:      MouseMoveEvent,
     key_press:       KeyEvent,
     key_release:     KeyEvent,
-    char_input:      u21,             // Unicode codepoint — use for text input
+    char_input:      u21,
     resize:          ResizeEvent,
     scroll:          ScrollEvent,
     close:           void,
     paint:           void,
     focus_gained:    void,
     focus_lost:      void,
-    ime_start:       void,            // WM_IME_STARTCOMPOSITION — composition session began
-    ime_composition: ImeComposition,  // WM_IME_COMPOSITION — in-progress candidate string
-    ime_end:         void,            // WM_IME_ENDCOMPOSITION — session ended (or committed)
-};
-
-pub const ImeComposition = struct {
-    /// In-progress candidate string (UTF-8, heap-allocated, owned by the event dispatch layer).
-    /// Do NOT free this slice — it is freed when replaced by the next ime_composition or on ime_end.
-    composition: []const u8,
-    /// Cursor byte offset within the composition string.
-    cursor:      usize,
-    /// True when GCS_RESULTSTR fired — the composition was committed (followed by ime_end).
-    committed:   bool,
+    ime_start:       void,
+    ime_composition: ImeCompositionEvent,
+    ime_cancel:      void,
+    drag_enter:      DragPayload,
+    drag_over:       DragPosition,
+    drag_leave:      void,
+    drop:            DragPayload,
 };
 
 pub const MouseEvent     = struct { x: i32, y: i32, button: MouseButton, modifiers: Modifiers };
@@ -1045,7 +1041,66 @@ pub const MouseButton    = enum { left, middle, right, x1, x2 };
 pub const Modifiers = packed struct {
     shift: bool, ctrl: bool, alt: bool, super: bool, _pad: u4,
 };
+
+/// Payload for drag_enter and drop events.
+///
+/// Memory is owned by the platform's DropTarget arena. Strings are valid only
+/// until the next `pollEvent()` call. Copy any data you need to retain.
+pub const DragPayload = struct {
+    files: []const []const u8,  // UTF-8 file paths (empty slice if none)
+    text:  []const u8,          // UTF-8 text content (empty string if none)
+    x:     i32,                 // client-area drop position (logical pixels)
+    y:     i32,
+};
+
+pub const DragPosition = struct { x: i32, y: i32 };
 ```
+
+### Drag and drop (Windows)
+
+Drag-and-drop support is registered automatically when a `Window` is created on Windows (via `IDropTarget` COM registration). No application-side setup is required.
+
+**Handling drops in the event loop:**
+
+```zig
+while (app.pollEvent()) |ev| {
+    switch (ev) {
+        .drag_enter => |payload| {
+            // User is hovering — preview what they will drop.
+            // payload.files: []const []const u8 — file paths
+            // payload.text:  []const u8         — text content
+            // payload.x/.y:  i32                — cursor position (logical px)
+            std.debug.print("drag enter: {} files, {} bytes text\n",
+                .{ payload.files.len, payload.text.len });
+        },
+        .drag_over => |pos| {
+            // Cursor moved; update any drop-target highlight at pos.x, pos.y.
+            _ = pos;
+        },
+        .drag_leave => {
+            // Drag left the window without dropping — clear any visual feedback.
+        },
+        .drop => |payload| {
+            // Actual drop — copy data before next pollEvent() call!
+            for (payload.files) |path| {
+                const owned = try alloc.dupe(u8, path);
+                // ... process file at owned path
+            }
+            if (payload.text.len > 0) {
+                const owned_text = try alloc.dupe(u8, payload.text);
+                // ... process dropped text
+            }
+        },
+        else => {},
+    }
+}
+```
+
+**Memory rules for DragPayload:**
+- All slices in `DragPayload` point into a per-window `ArenaAllocator` inside the platform layer.
+- They are valid from the moment the event is returned by `pollEvent()` until the **next** call to `pollEvent()`.
+- If you need the data beyond that, call `alloc.dupe(u8, path)` / `alloc.dupe([]const u8, files)` immediately.
+- `drag_enter` and `drop` both carry a full payload. `drag_over` only carries coordinates.
 
 ### KeyCode (selected)
 

@@ -101,6 +101,11 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag == .windows) {
         exe.root_module.linkSystemLibrary("imm32", .{});
     }
+    // On Windows, the drag-and-drop backend requires OLE and Shell APIs.
+    if (target.result.os.tag == .windows) {
+        exe.root_module.linkSystemLibrary("ole32", .{});
+        exe.root_module.linkSystemLibrary("shell32", .{});
+    }
 
     b.installArtifact(exe);
 

@@ -60,11 +60,7 @@ pub const ScrollEvent = struct {
 };
 
 /// Payload for an in-progress IME composition string update.
-/// `text()` returns the provisional (uncommitted) composition string in UTF-8.
-/// The string is stored inline so event lifetime equals ring-buffer lifetime —
-/// no separate allocation or slice-lifetime tracking is needed.
-/// 192 bytes fits up to 64 CJK characters (max 3 UTF-8 bytes each), which is
-/// far larger than any real-world composition session.
+/// Stored inline (no heap allocation); 192 bytes fits up to 64 CJK characters.
 pub const IME_BUF_MAX = 192;
 
 pub const ImeCompositionEvent = struct {
@@ -75,7 +71,6 @@ pub const ImeCompositionEvent = struct {
         return self.buf[0..self.len];
     }
 
-    /// Fill from a UTF-8 slice, truncating silently if too long.
     pub fn fromSlice(src: []const u8) ImeCompositionEvent {
         var ev = ImeCompositionEvent{};
         const n = @min(src.len, IME_BUF_MAX);
@@ -84,6 +79,18 @@ pub const ImeCompositionEvent = struct {
         return ev;
     }
 };
+
+/// Payload delivered on `drag_enter` and `drop` events.
+/// Memory is owned by the platform's DropTarget arena — do not hold across event loop iterations.
+pub const DragPayload = struct {
+    files: []const []const u8,
+    text: []const u8,
+    x: i32,
+    y: i32,
+};
+
+/// Position-only payload delivered on `drag_over`.
+pub const DragPosition = struct { x: i32, y: i32 };
 
 pub const Event = union(enum) {
     mouse_press: MouseEvent,
@@ -104,6 +111,15 @@ pub const Event = union(enum) {
     paint: void,
     focus_gained: void,
     focus_lost: void,
+    /// A dragged object entered the window. `DragPayload.files` and `.text`
+    /// are populated with a preview of what will be dropped.
+    drag_enter: DragPayload,
+    /// The drag cursor moved while hovering over the window.
+    drag_over: DragPosition,
+    /// The drag left the window without a drop.
+    drag_leave: void,
+    /// The user released the mouse and completed a drop into the window.
+    drop: DragPayload,
 };
 
 test "MouseEvent field access" {
@@ -125,4 +141,15 @@ test "Modifiers default" {
     const mods = Modifiers{};
     try std.testing.expect(!mods.shift);
     try std.testing.expect(!mods.ctrl);
+}
+
+test "DragPayload fields" {
+    const payload = DragPayload{
+        .files = &.{},
+        .text  = "",
+        .x     = 100,
+        .y     = 200,
+    };
+    try std.testing.expectEqual(@as(usize, 0), payload.files.len);
+    try std.testing.expectEqual(@as(i32, 100), payload.x);
 }
