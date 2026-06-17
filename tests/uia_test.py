@@ -229,6 +229,33 @@ def test_about(win, r):
             r.fail("expand -> label changes to '(collapse)'")
 
 
+def test_images(win, r):
+    print("\n[Images]")
+    nav(win, "Images", r)
+
+    # assert_exists only — clicking Load Image opens a blocking OS file dialog
+    r.assert_exists(win, "Load Image", "Button")
+    r.assert_exists(win, "Clear",      "Button")
+
+
+def test_data_binding(win, r):
+    print("\n[Data Binding]")
+    nav(win, "Data Binding", r)
+
+    r.assert_click(win, "Increment", "Button")
+    r.assert_click(win, "Decrement", "Button")
+    r.assert_click(win, "Reset",     "Button")
+
+
+def test_file_dialogs(win, r):
+    print("\n[File Dialogs]")
+    nav(win, "File Dialogs", r)
+
+    r.assert_exists(win, "Open File",     "Button")
+    r.assert_exists(win, "Save File",     "Button")
+    r.assert_exists(win, "Browse Folder", "Button")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -262,6 +289,9 @@ def main():
         test_overlays(win, r)
         test_animations(win, r)
         test_about(win, r)
+        test_images(win, r)
+        test_data_binding(win, r)
+        test_file_dialogs(win, r)
     finally:
         if proc:
             proc.terminate()

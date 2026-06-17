@@ -4,6 +4,7 @@ const Rect       = @import("../layout/geometry.zig").Rect;
 const Size       = @import("../layout/geometry.zig").Size;
 const Renderer   = @import("../graphics/renderer.zig").Renderer;
 const Event      = @import("../events/event.zig").Event;
+const cb         = @import("../platform/win32/clipboard.zig");
 const AccessNode = @import("../accessibility/node.zig").AccessNode;
 
 pub const TextArea = struct {
@@ -91,6 +92,64 @@ pub const TextArea = struct {
             },
             .key_press => |k| {
                 if (!self.focused) return false;
+
+                // Ctrl shortcuts
+                if (k.modifiers.ctrl) {
+                    switch (k.key) {
+                        .c => {
+                            const text = self.getText(alloc) catch return true;
+                            defer alloc.free(text);
+                            cb.setText(text, alloc);
+                            return true;
+                        },
+                        .v => {
+                            if (cb.getText(alloc)) |pasted| {
+                                defer alloc.free(pasted);
+                                var it = std.mem.splitScalar(u8, pasted, '\n');
+                                var first = true;
+                                while (it.next()) |segment| {
+                                    if (first) {
+                                        // Insert the first segment into the current line at cursor_col
+                                        self.lines.items[self.cursor_row].insertSlice(alloc, self.cursor_col, segment) catch break;
+                                        self.cursor_col += segment.len;
+                                        first = false;
+                                    } else {
+                                        // Each subsequent segment: split the current line (like .enter key)
+                                        const cur = &self.lines.items[self.cursor_row];
+                                        const tail = cur.items[self.cursor_col..];
+                                        var new_line = std.ArrayListUnmanaged(u8).empty;
+                                        new_line.appendSlice(alloc, tail) catch break;
+                                        new_line.insertSlice(alloc, 0, segment) catch {
+                                            new_line.deinit(alloc);
+                                            break;
+                                        };
+                                        cur.shrinkRetainingCapacity(self.cursor_col);
+                                        self.lines.insert(alloc, self.cursor_row + 1, new_line) catch {
+                                            new_line.deinit(alloc);
+                                            break;
+                                        };
+                                        self.cursor_row += 1;
+                                        self.cursor_col = segment.len;
+                                    }
+                                }
+                            }
+                            return true;
+                        },
+                        .x => {
+                            const text = self.getText(alloc) catch return true;
+                            defer alloc.free(text);
+                            cb.setText(text, alloc);
+                            // Clear all lines, keep one empty line, reset cursor
+                            for (self.lines.items) |*line| line.deinit(alloc);
+                            self.lines.clearRetainingCapacity();
+                            self.lines.append(alloc, std.ArrayListUnmanaged(u8).empty) catch {};
+                            self.cursor_row = 0;
+                            self.cursor_col = 0;
+                            return true;
+                        },
+                        else => {},
+                    }
+                }
 
                 switch (k.key) {
                     .enter => {

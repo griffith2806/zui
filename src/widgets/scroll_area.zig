@@ -62,6 +62,26 @@ pub const ScrollArea = struct {
         if (self.scroll_offset > max) self.scroll_offset = max;
     }
 
+    /// Call before drawing scroll content. Sets the renderer clip to the
+    /// content area so nothing overflows the scroll bounds. Returns the
+    /// content rect (excludes the scrollbar column).
+    ///
+    /// Usage:
+    ///   const cr = sa.pushClip(r, rect);
+    ///   // draw content at (cr.x, cr.y - sa.scroll_offset)
+    ///   sa.popClip(r);
+    ///   sa.draw(r, rect); // draw the scrollbar on top
+    pub fn pushClip(self: *const ScrollArea, r: *Renderer, rect: Rect) Rect {
+        const cr = self.contentRect(rect);
+        r.setClip(cr);
+        return cr;
+    }
+
+    /// Remove the clip set by pushClip.
+    pub fn popClip(_: *const ScrollArea, r: *Renderer) void {
+        r.clearClip();
+    }
+
     pub fn draw(self: *const ScrollArea, r: *Renderer, rect: Rect) void {
         const track = self.trackRect(rect);
         r.fillRoundRect(track, self.scrollbar_width / 2, self.track_color);

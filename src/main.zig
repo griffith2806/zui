@@ -22,18 +22,21 @@ var W: u32 = 1060;
 var H: u32 = 680;
 
 // ── Navigation ───────────────────────────────────────────────────────────────
-const Page = enum { dashboard, controls, inputs, overlays, colors, layout, styles, animations, about };
+const Page = enum { dashboard, controls, inputs, overlays, colors, layout, styles, animations, about, images, data_binding, file_dialogs };
 
 const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
-    .{ .label = "Dashboard", .page = .dashboard, .icon = "D" },
-    .{ .label = "Controls",  .page = .controls,  .icon = "C" },
-    .{ .label = "Inputs",    .page = .inputs,    .icon = "I" },
-    .{ .label = "Overlays",  .page = .overlays,  .icon = "O" },
-    .{ .label = "Colors",    .page = .colors,    .icon = "P" },
-    .{ .label = "Layout",     .page = .layout,     .icon = "L" },
-    .{ .label = "Styles",     .page = .styles,     .icon = "S" },
-    .{ .label = "Animations", .page = .animations, .icon = "M" },
-    .{ .label = "About",      .page = .about,      .icon = "A" },
+    .{ .label = "Dashboard",    .page = .dashboard,    .icon = "D" },
+    .{ .label = "Controls",     .page = .controls,     .icon = "C" },
+    .{ .label = "Inputs",       .page = .inputs,       .icon = "I" },
+    .{ .label = "Overlays",     .page = .overlays,     .icon = "O" },
+    .{ .label = "Colors",       .page = .colors,       .icon = "P" },
+    .{ .label = "Layout",       .page = .layout,       .icon = "L" },
+    .{ .label = "Styles",       .page = .styles,       .icon = "S" },
+    .{ .label = "Animations",   .page = .animations,   .icon = "M" },
+    .{ .label = "About",        .page = .about,        .icon = "A" },
+    .{ .label = "Images",       .page = .images,       .icon = "G" },
+    .{ .label = "Data Binding", .page = .data_binding, .icon = "B" },
+    .{ .label = "File Dialogs", .page = .file_dialogs, .icon = "F" },
 };
 
 // ── Animation demo data ──────────────────────────────────────────────────────
@@ -544,6 +547,326 @@ const AnimationsState = struct {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// PAGE STATE: Images
+// ══════════════════════════════════════════════════════════════════════════════
+const ImagesState = struct {
+    btn_load:  zui.Button = .{ .label = "Load Image" },
+    btn_clear: zui.Button = .{ .label = "Clear" },
+    image:     ?zui.Image = null,
+    err_msg:   []const u8 = "",
+
+    pub fn deinit(self: *ImagesState, alloc: std.mem.Allocator) void {
+        self.btn_load.deinit(alloc);
+        self.btn_clear.deinit(alloc);
+        if (self.image) |*img| img.deinit(alloc);
+    }
+
+    pub fn handleEvent(self: *ImagesState, ev: zui.Event, alloc: std.mem.Allocator) void {
+        const lx = cx(); const base = cy();
+        const IMG_FILTERS = [_]zui.FileFilter{
+            .{ .name = "Image Files", .spec = "*.png;*.jpg;*.jpeg;*.bmp;*.gif" },
+            .{ .name = "All Files",   .spec = "*.*" },
+        };
+        if (self.btn_load.handleEvent(ev, zui.Rect.init(lx, base + 20, 130, 34))) {
+            if (!self.btn_load.pressed) {
+                const path = zui.openFile(alloc, .{ .title = "Open Image", .filters = &IMG_FILTERS }) catch {
+                    self.err_msg = "Dialog error";
+                    return;
+                };
+                if (path) |p| {
+                    defer alloc.free(p);
+                    if (self.image) |*old| old.deinit(alloc);
+                    self.image = zui.Image.loadFile(alloc, p) catch blk: {
+                        self.err_msg = "Load failed";
+                        break :blk null;
+                    };
+                    if (self.image != null) self.err_msg = "";
+                }
+            }
+        }
+        if (self.btn_clear.handleEvent(ev, zui.Rect.init(lx + 140, base + 20, 100, 34))) {
+            if (!self.btn_clear.pressed) {
+                if (self.image) |*img| img.deinit(alloc);
+                self.image   = null;
+                self.err_msg = "";
+            }
+        }
+    }
+
+    pub fn update(self: *ImagesState, dt_s: f32) void {
+        self.btn_load.update(dt_s);
+        self.btn_clear.update(dt_s);
+        self.btn_load.style  = .{ .bg = ACCENT,  .bg_hover = ACCENT_HV,  .bg_press = ACCENT_PR,  .fg = FG };
+        self.btn_clear.style = .{ .bg = BG_CARD, .bg_hover = NAV_ITEM_H, .bg_press = SEP,        .fg = FG };
+    }
+
+    pub fn draw(self: *const ImagesState, r: *zui.Renderer, dark_mode: bool) void {
+        const lx = cx(); const base = cy(); const ly = HDR_H + 16;
+        const rx: i32 = lx + 380;
+        _ = dark_mode;
+
+        r.drawTextScaled("Images", lx, ly, FG, 2);
+        r.drawText("PNG / JPEG loading via WIC  —  zui.Image.loadFile()", lx, ly + 30, FG_SEC);
+
+        sectionLabel(r, lx, base, "Image viewer");
+        self.btn_load.draw(r,  zui.Rect.init(lx,       base + 20, 130, 34));
+        self.btn_clear.draw(r, zui.Rect.init(lx + 140, base + 20, 100, 34));
+
+        const canvas = zui.Rect.init(lx, base + 68, 320, 200);
+        r.fillRoundRect(canvas, 8, SEP);
+        r.fillRoundRect(zui.Rect.init(canvas.x + 1, canvas.y + 1, canvas.width - 2, canvas.height - 2), 7, BG_CARD);
+
+        if (self.image) |*img| {
+            // Scale to fit canvas preserving aspect ratio
+            const scale_x = @as(f32, @floatFromInt(canvas.width  - 4)) / @as(f32, @floatFromInt(img.width));
+            const scale_y = @as(f32, @floatFromInt(canvas.height - 4)) / @as(f32, @floatFromInt(img.height));
+            const scale = @min(scale_x, scale_y);
+            const dw: u32 = @max(1, @as(u32, @intFromFloat(@as(f32, @floatFromInt(img.width))  * scale)));
+            const dh: u32 = @max(1, @as(u32, @intFromFloat(@as(f32, @floatFromInt(img.height)) * scale)));
+            const dx: i32 = canvas.x + @as(i32, @intCast((canvas.width  - dw) / 2));
+            const dy: i32 = canvas.y + @as(i32, @intCast((canvas.height - dh) / 2));
+            r.drawImage(img, zui.Rect.init(dx, dy, dw, dh));
+            var info_buf: [80]u8 = undefined;
+            const info = std.fmt.bufPrint(&info_buf, "{}x{}  BGRA8  WIC decoded", .{ img.width, img.height }) catch "";
+            r.drawText(info, lx, base + 278, FG_SEC);
+        } else if (self.err_msg.len > 0) {
+            r.drawText(self.err_msg, canvas.x + 80, canvas.y + 88, zui.Color.rgb(196, 43, 28));
+            r.drawText("Click 'Load Image' to try again", lx, base + 278, FG_TER);
+        } else {
+            r.drawText("[ no image loaded ]", canvas.x + 90, canvas.y + 88, FG_TER);
+            r.drawText("Click 'Load Image' to open a file dialog", lx, base + 278, FG_TER);
+        }
+
+        sectionLabel(r, rx, base, "Image API");
+        const api_lines = [_]struct { text: []const u8, color: zui.Color }{
+            .{ .text = "zui.Image.loadFile(alloc, path)", .color = ACCENT_HV },
+            .{ .text = "  returns !Image",               .color = FG_SEC     },
+            .{ .text = "",                               .color = FG_TER     },
+            .{ .text = "Image fields:",                  .color = FG_SEC     },
+            .{ .text = "  .pixels  []u32  ARGB",        .color = FG_SEC     },
+            .{ .text = "  .width / .height  u32",       .color = FG_SEC     },
+            .{ .text = "",                               .color = FG_TER     },
+            .{ .text = "r.drawImage(*Image, dst: Rect)", .color = ACCENT_HV },
+            .{ .text = "  clips to active clip rect",   .color = FG_TER     },
+            .{ .text = "",                               .color = FG_TER     },
+            .{ .text = "Windows backend: WIC",           .color = FG_TER     },
+            .{ .text = "  IWICImagingFactory",           .color = FG_TER     },
+            .{ .text = "  -> FormatConverter -> BGRA",   .color = FG_TER     },
+        };
+        for (api_lines, 0..) |line, i|
+            r.drawText(line.text, rx + 4, base + 20 + @as(i32, @intCast(i)) * 19, line.color);
+    }
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PAGE STATE: Data Binding
+// ══════════════════════════════════════════════════════════════════════════════
+const DataBindingState = struct {
+    counter:   zui.Property(i32) = zui.Property(i32).init(0),
+    mirror:    zui.Property(i32) = zui.Property(i32).init(0),
+    btn_inc:   zui.Button        = .{ .label = "Increment" },
+    btn_dec:   zui.Button        = .{ .label = "Decrement" },
+    btn_reset: zui.Button        = .{ .label = "Reset" },
+
+    pub fn init(self: *DataBindingState, alloc: std.mem.Allocator) !void {
+        try self.counter.bind(alloc, &self.mirror);
+    }
+
+    pub fn deinit(self: *DataBindingState, alloc: std.mem.Allocator) void {
+        self.counter.deinit(alloc);
+        self.mirror.deinit(alloc);
+        self.btn_inc.deinit(alloc);
+        self.btn_dec.deinit(alloc);
+        self.btn_reset.deinit(alloc);
+    }
+
+    pub fn handleEvent(self: *DataBindingState, ev: zui.Event) void {
+        const lx = cx(); const base = cy();
+        if (self.btn_inc.handleEvent(ev, zui.Rect.init(lx, base + 40, 120, 34))) {
+            if (!self.btn_inc.pressed) self.counter.set(self.counter.get() + 1);
+        }
+        if (self.btn_dec.handleEvent(ev, zui.Rect.init(lx + 130, base + 40, 120, 34))) {
+            if (!self.btn_dec.pressed) self.counter.set(self.counter.get() - 1);
+        }
+        if (self.btn_reset.handleEvent(ev, zui.Rect.init(lx + 260, base + 40, 100, 34))) {
+            if (!self.btn_reset.pressed) self.counter.set(0);
+        }
+    }
+
+    pub fn update(self: *DataBindingState, dt_s: f32) void {
+        self.btn_inc.update(dt_s);
+        self.btn_dec.update(dt_s);
+        self.btn_reset.update(dt_s);
+        self.btn_inc.style   = .{ .bg = ACCENT,  .bg_hover = ACCENT_HV,  .bg_press = ACCENT_PR,  .fg = FG };
+        self.btn_dec.style   = .{ .bg = ACCENT,  .bg_hover = ACCENT_HV,  .bg_press = ACCENT_PR,  .fg = FG };
+        self.btn_reset.style = .{ .bg = BG_CARD, .bg_hover = NAV_ITEM_H, .bg_press = SEP,        .fg = FG };
+    }
+
+    pub fn draw(self: *const DataBindingState, r: *zui.Renderer, dark_mode: bool) void {
+        const lx = cx(); const base = cy(); const ly = HDR_H + 16;
+        const rx: i32 = lx + 420;
+        _ = dark_mode;
+
+        r.drawTextScaled("Data Binding", lx, ly, FG, 2);
+        r.drawText("Property(T)  reactive values  +  one-directional binding", lx, ly + 30, FG_SEC);
+
+        // Source property
+        sectionLabel(r, lx, base, "Source  counter: Property(i32)");
+        self.btn_inc.draw(r,   zui.Rect.init(lx,       base + 40, 120, 34));
+        self.btn_dec.draw(r,   zui.Rect.init(lx + 130, base + 40, 120, 34));
+        self.btn_reset.draw(r, zui.Rect.init(lx + 260, base + 40, 100, 34));
+
+        var val_buf: [16]u8 = undefined;
+        const val_str = std.fmt.bufPrint(&val_buf, "{d}", .{self.counter.get()}) catch "?";
+        r.drawText("counter.get() =", lx, base + 92, FG_SEC);
+        r.drawTextScaled(val_str, lx + 130, base + 84, ACCENT, 2);
+
+        // Mirror property (bound)
+        sectionLabel(r, lx, base + 126, "Bound target  mirror: Property(i32)");
+        r.drawText("mirror is bound to counter via counter.bind(alloc, &mirror).", lx, base + 146, FG_TER);
+        r.drawText("Whenever counter.set() fires, mirror updates automatically.", lx, base + 164, FG_TER);
+
+        var mir_buf: [16]u8 = undefined;
+        const mir_str = std.fmt.bufPrint(&mir_buf, "{d}", .{self.mirror.get()}) catch "?";
+        r.drawText("mirror.get()  =", lx, base + 190, FG_SEC);
+        r.drawTextScaled(mir_str, lx + 130, base + 182, zui.Color.rgb(16, 124, 16), 2);
+
+        // Right column: API reference
+        sectionLabel(r, rx, base, "Property(T) API");
+        const api = [_]struct { text: []const u8, color: zui.Color }{
+            .{ .text = "Property(T).init(val)",   .color = ACCENT_HV },
+            .{ .text = "  .get() T",              .color = FG_SEC    },
+            .{ .text = "  .set(new_val)",         .color = FG_SEC    },
+            .{ .text = "    emits changed signal", .color = FG_TER   },
+            .{ .text = "    if value differs",     .color = FG_TER   },
+            .{ .text = "  .bind(alloc, &target)",  .color = FG_SEC   },
+            .{ .text = "    one-directional",      .color = FG_TER   },
+            .{ .text = "  .changed: Signal(T)",    .color = FG_SEC   },
+            .{ .text = "    connect() for reactions",.color = FG_TER },
+            .{ .text = "",                         .color = FG_TER   },
+            .{ .text = "Computed(T):",             .color = ACCENT_HV },
+            .{ .text = "  lazy, cached, reactive", .color = FG_SEC   },
+            .{ .text = "  .addSource(&prop)",      .color = FG_SEC   },
+            .{ .text = "  .get() recomputes",      .color = FG_TER   },
+        };
+        for (api, 0..) |line, i|
+            r.drawText(line.text, rx + 4, base + 20 + @as(i32, @intCast(i)) * 19, line.color);
+    }
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PAGE STATE: File Dialogs
+// ══════════════════════════════════════════════════════════════════════════════
+const FileDialogsState = struct {
+    btn_open:   zui.Button = .{ .label = "Open File" },
+    btn_save:   zui.Button = .{ .label = "Save File" },
+    btn_folder: zui.Button = .{ .label = "Browse Folder" },
+    last_path:  ?[]u8      = null,
+    last_op:    enum { none, open, save, folder, cancelled } = .none,
+
+    pub fn deinit(self: *FileDialogsState, alloc: std.mem.Allocator) void {
+        self.btn_open.deinit(alloc);
+        self.btn_save.deinit(alloc);
+        self.btn_folder.deinit(alloc);
+    }
+
+    pub fn handleEvent(self: *FileDialogsState, ev: zui.Event, alloc: std.mem.Allocator) void {
+        const lx = cx(); const base = cy();
+        const IMG_FILTERS = [_]zui.FileFilter{
+            .{ .name = "Image Files", .spec = "*.png;*.jpg;*.jpeg;*.bmp" },
+            .{ .name = "All Files",   .spec = "*.*" },
+        };
+        if (self.btn_open.handleEvent(ev, zui.Rect.init(lx, base + 40, 140, 34))) {
+            if (!self.btn_open.pressed) {
+                const r = zui.openFile(alloc, .{ .title = "Open Image", .filters = &IMG_FILTERS }) catch null;
+                if (r) |p| { self.last_path = p; self.last_op = .open; }
+                else        { self.last_path = null; self.last_op = .cancelled; }
+            }
+        }
+        if (self.btn_save.handleEvent(ev, zui.Rect.init(lx, base + 90, 140, 34))) {
+            if (!self.btn_save.pressed) {
+                const r = zui.saveFile(alloc, .{ .title = "Save File", .default_ext = "txt" }) catch null;
+                if (r) |p| { self.last_path = p; self.last_op = .save; }
+                else        { self.last_path = null; self.last_op = .cancelled; }
+            }
+        }
+        if (self.btn_folder.handleEvent(ev, zui.Rect.init(lx, base + 140, 160, 34))) {
+            if (!self.btn_folder.pressed) {
+                const r = zui.openFolder(alloc, "Choose Folder") catch null;
+                if (r) |p| { self.last_path = p; self.last_op = .folder; }
+                else        { self.last_path = null; self.last_op = .cancelled; }
+            }
+        }
+    }
+
+    pub fn update(self: *FileDialogsState, dt_s: f32) void {
+        self.btn_open.update(dt_s);
+        self.btn_save.update(dt_s);
+        self.btn_folder.update(dt_s);
+        self.btn_open.style   = .{ .bg = ACCENT, .bg_hover = ACCENT_HV, .bg_press = ACCENT_PR, .fg = FG };
+        self.btn_save.style   = .{ .bg = ACCENT, .bg_hover = ACCENT_HV, .bg_press = ACCENT_PR, .fg = FG };
+        self.btn_folder.style = .{ .bg = ACCENT, .bg_hover = ACCENT_HV, .bg_press = ACCENT_PR, .fg = FG };
+    }
+
+    pub fn draw(self: *const FileDialogsState, r: *zui.Renderer, dark_mode: bool) void {
+        const lx = cx(); const base = cy(); const ly = HDR_H + 16;
+        const rx: i32 = lx + 420;
+        _ = dark_mode;
+
+        r.drawTextScaled("File Dialogs", lx, ly, FG, 2);
+        r.drawText("Native OS file picker via IFileDialog COM", lx, ly + 30, FG_SEC);
+
+        sectionLabel(r, lx, base, "Native dialogs");
+        r.drawText("Open:",         lx, base + 22, FG_SEC);
+        self.btn_open.draw(r,   zui.Rect.init(lx, base + 40,  140, 34));
+        r.drawText("Save:",         lx, base + 76, FG_SEC);
+        self.btn_save.draw(r,   zui.Rect.init(lx, base + 90,  140, 34));
+        r.drawText("Folder:",       lx, base + 126, FG_SEC);
+        self.btn_folder.draw(r, zui.Rect.init(lx, base + 140, 160, 34));
+
+        const result_y: i32 = base + 194;
+        r.fillRect(zui.Rect.init(lx, result_y, 560, 1), SEP);
+        switch (self.last_op) {
+            .none      => r.drawText("(no dialog opened yet)", lx, result_y + 10, FG_TER),
+            .cancelled => r.drawText("User cancelled.", lx, result_y + 10, FG_TER),
+            .open      => {
+                r.drawText("Opened:", lx, result_y + 10, FG_SEC);
+                r.drawText(self.last_path orelse "(null)", lx, result_y + 28, ACCENT_HV);
+            },
+            .save      => {
+                r.drawText("Save path:", lx, result_y + 10, FG_SEC);
+                r.drawText(self.last_path orelse "(null)", lx, result_y + 28, ACCENT_HV);
+            },
+            .folder    => {
+                r.drawText("Folder:", lx, result_y + 10, FG_SEC);
+                r.drawText(self.last_path orelse "(null)", lx, result_y + 28, ACCENT_HV);
+            },
+        }
+
+        sectionLabel(r, rx, base, "File Dialog API");
+        const api = [_]struct { text: []const u8, color: zui.Color }{
+            .{ .text = "zui.openFile(alloc, opts)",   .color = ACCENT_HV },
+            .{ .text = "  opts.title  ?[]const u8",   .color = FG_SEC    },
+            .{ .text = "  opts.filters []FileFilter", .color = FG_SEC    },
+            .{ .text = "  opts.default_ext ?str",     .color = FG_SEC    },
+            .{ .text = "  returns !?[]u8",            .color = FG_TER    },
+            .{ .text = "",                            .color = FG_TER    },
+            .{ .text = "zui.saveFile(alloc, opts)",   .color = ACCENT_HV },
+            .{ .text = "  same options",              .color = FG_SEC    },
+            .{ .text = "  returns !?[]u8",            .color = FG_TER    },
+            .{ .text = "",                            .color = FG_TER    },
+            .{ .text = "zui.openFolder(alloc, title)",.color = ACCENT_HV },
+            .{ .text = "  returns !?[]u8",            .color = FG_TER    },
+            .{ .text = "",                            .color = FG_TER    },
+            .{ .text = "null = user cancelled",       .color = FG_TER    },
+            .{ .text = "caller owns returned slice",  .color = FG_TER    },
+        };
+        for (api, 0..) |line, i|
+            r.drawText(line.text, rx + 4, base + 20 + @as(i32, @intCast(i)) * 19, line.color);
+    }
+};
+
+// ══════════════════════════════════════════════════════════════════════════════
 // MAIN LOOP
 // ══════════════════════════════════════════════════════════════════════════════
 pub fn main(init: std.process.Init) !void {
@@ -579,6 +902,16 @@ pub fn main(init: std.process.Init) !void {
     var animations = AnimationsState{};
     animations.init();
     defer animations.deinit(alloc);
+
+    var images = ImagesState{};
+    defer images.deinit(alloc);
+
+    var data_binding = DataBindingState{};
+    try data_binding.init(alloc);
+    defer data_binding.deinit(alloc);
+
+    var file_dialogs = FileDialogsState{};
+    defer file_dialogs.deinit(alloc);
 
     var nav_rects: [NAV_ITEMS.len]zui.Rect = undefined;
     for (0..NAV_ITEMS.len) |i|
@@ -621,11 +954,14 @@ pub fn main(init: std.process.Init) !void {
                 else => {},
             }
             switch (page) {
-                .controls   => controls.handleEvent(ev, alloc),
-                .inputs     => inputs.handleEvent(ev, alloc),
-                .overlays   => overlays.handleEvent(ev, win_rect),
-                .animations => animations.handleEvent(ev),
-                .about      => switch (ev) {
+                .controls     => controls.handleEvent(ev, alloc),
+                .inputs       => inputs.handleEvent(ev, alloc),
+                .overlays     => overlays.handleEvent(ev, win_rect),
+                .animations   => animations.handleEvent(ev),
+                .images       => images.handleEvent(ev, alloc),
+                .data_binding => data_binding.handleEvent(ev),
+                .file_dialogs => file_dialogs.handleEvent(ev, alloc),
+                .about        => switch (ev) {
                     .mouse_press => |m| {
                         const exp_y: i32 = HDR_H + 16 + 144 + 9 * 22 + 16;
                         if (m.button == .left and
@@ -646,6 +982,9 @@ pub fn main(init: std.process.Init) !void {
         const theme = if (dark_mode) zui.Theme.dark else zui.Theme.light;
         controls.update(dt_s, theme);
         overlays.update(dt_s);
+        images.update(dt_s);
+        data_binding.update(dt_s);
+        file_dialogs.update(dt_s);
         if (page == .animations) animations.update(dt_s);
         for (0..NAV_ITEMS.len) |i| {
             nav_hover_t[i] += (@as(f32, if (nav_hovered[i]) 1.0 else 0.0) - nav_hover_t[i]) *
@@ -672,21 +1011,24 @@ pub fn main(init: std.process.Init) !void {
             drawHeader(&app.renderer, page, dark_mode);
 
             switch (page) {
-                .dashboard  => drawDashboard(&app.renderer, controls.counter, dark_mode),
-                .controls   => controls.draw(&app.renderer, dark_mode, theme),
-                .inputs     => inputs.draw(&app.renderer, dark_mode),
-                .overlays   => overlays.draw(&app.renderer, dark_mode, zui.Rect.init(0, 0, W, H)),
-                .colors     => drawColors(&app.renderer, dark_mode),
-                .layout     => drawLayout(&app.renderer, dark_mode, theme),
-                .styles     => drawStyles(&app.renderer, dark_mode),
-                .animations => animations.draw(&app.renderer, dark_mode),
-                .about      => drawAbout(&app.renderer, about_expanded, dark_mode),
+                .dashboard    => drawDashboard(&app.renderer, controls.counter, dark_mode),
+                .controls     => controls.draw(&app.renderer, dark_mode, theme),
+                .inputs       => inputs.draw(&app.renderer, dark_mode),
+                .overlays     => overlays.draw(&app.renderer, dark_mode, zui.Rect.init(0, 0, W, H)),
+                .colors       => drawColors(&app.renderer, dark_mode),
+                .layout       => drawLayout(&app.renderer, dark_mode, theme),
+                .styles       => drawStyles(&app.renderer, dark_mode),
+                .animations   => animations.draw(&app.renderer, dark_mode),
+                .about        => drawAbout(&app.renderer, about_expanded, dark_mode),
+                .images       => images.draw(&app.renderer, dark_mode),
+                .data_binding => data_binding.draw(&app.renderer, dark_mode),
+                .file_dialogs => file_dialogs.draw(&app.renderer, dark_mode),
             }
 
             app.present();
 
             // Publish current widget positions to UIA / screen readers.
-            buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, about_expanded, &nav_rects, alloc);
+            buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, &images, &data_binding, &file_dialogs, about_expanded, &nav_rects, alloc);
         }
         app.capFps(60);
     }
@@ -703,6 +1045,9 @@ fn buildAccessibilityTree(
     inputs:         *const InputsState,
     animations:     *AnimationsState,
     overlays:       *OverlaysState,
+    images:         *ImagesState,
+    data_binding:   *DataBindingState,
+    file_dialogs:   *FileDialogsState,
     about_expanded: bool,
     nav_rects:      []const zui.Rect,
     alloc:          std.mem.Allocator,
@@ -864,6 +1209,84 @@ fn buildAccessibilityTree(
                 n += 1;
             }
         },
+        .images => {
+            if (n < nodes.len) {
+                var nd = images.btn_load.accessNode(zui.Rect.init(lx, base + 20, 130, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &images.btn_load;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = images.btn_clear.accessNode(zui.Rect.init(lx + 140, base + 20, 100, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &images.btn_clear;
+                nodes[n] = nd; n += 1;
+            }
+        },
+        .data_binding => {
+            if (n < nodes.len) {
+                var nd = data_binding.btn_inc.accessNode(zui.Rect.init(lx, base + 40, 120, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &data_binding.btn_inc;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = data_binding.btn_dec.accessNode(zui.Rect.init(lx + 130, base + 40, 120, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &data_binding.btn_dec;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = data_binding.btn_reset.accessNode(zui.Rect.init(lx + 260, base + 40, 100, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &data_binding.btn_reset;
+                nodes[n] = nd; n += 1;
+            }
+        },
+        .file_dialogs => {
+            if (n < nodes.len) {
+                var nd = file_dialogs.btn_open.accessNode(zui.Rect.init(lx, base + 40, 140, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &file_dialogs.btn_open;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = file_dialogs.btn_save.accessNode(zui.Rect.init(lx, base + 90, 140, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &file_dialogs.btn_save;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = file_dialogs.btn_folder.accessNode(zui.Rect.init(lx, base + 140, 160, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &file_dialogs.btn_folder;
+                nodes[n] = nd; n += 1;
+            }
+        },
         else => {},
     }
 
@@ -920,9 +1343,12 @@ fn drawHeader(r: *zui.Renderer, page: Page, dark_mode: bool) void {
     r.fillRect(zui.Rect.init(NAV_W, HDR_H, content_w, 1), SEP);
 
     const page_name = switch (page) {
-        .dashboard  => "Dashboard", .controls => "Controls",    .inputs => "Inputs",
-        .overlays   => "Overlays",  .colors   => "Colors",      .layout => "Layout",
-        .styles     => "Styles",    .animations => "Animations", .about  => "About",
+        .dashboard    => "Dashboard",    .controls     => "Controls",
+        .inputs       => "Inputs",       .overlays     => "Overlays",
+        .colors       => "Colors",       .layout       => "Layout",
+        .styles       => "Styles",       .animations   => "Animations",
+        .about        => "About",        .images       => "Images",
+        .data_binding => "Data Binding", .file_dialogs => "File Dialogs",
     };
     const bx = NAV_W + 20;
     const gw: i32 = @intCast(r.textWidth("zui Gallery"));
