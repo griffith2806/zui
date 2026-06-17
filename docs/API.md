@@ -1341,4 +1341,18 @@ src/
       gl_context.zig    ← WGL bootstrap for OpenGL backend
     x11/
       window.zig        ← X11 backend (written M19, untested on Linux)
+    cocoa/
+      window.zig        ← macOS Cocoa backend skeleton (stub — not yet implemented)
+      event_loop.zig    ← NSRunLoop polling skeleton
+      platform.zig      ← re-exports Window + EventLoop
 ```
+
+### Platform Backends
+
+| OS      | Backend dir       | Status                          | Frameworks linked            |
+|---------|-------------------|---------------------------------|------------------------------|
+| Windows | `platform/win32/` | Production-ready                | user32, gdi32, kernel32, dwmapi |
+| Linux   | `platform/x11/`   | Written (M19), untested on Linux| X11, libc                    |
+| macOS   | `platform/cocoa/` | Skeleton only — all methods `@panic` | Cocoa, Foundation, CoreGraphics |
+
+`build.zig` automatically links the correct set of frameworks for the build target (`target.result.os.tag`). No manual `-D` flag is needed.

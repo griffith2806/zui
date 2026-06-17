@@ -80,10 +80,20 @@ pub fn build(b: *std.Build) void {
     // step). By default the install prefix is `zig-out/` but can be overridden
     // by passing `--prefix` or `-p`.
     // Link system libraries required by platform backends.
-    // On Linux, the X11 backend uses Xlib and the X resource manager.
-    // In Zig 0.16, linkSystemLibrary lives on Module, not Compile.
+    // In Zig 0.16, linkSystemLibrary / linkFramework live on Module, not Compile.
     if (target.result.os.tag == .linux) {
+        // X11 backend: Xlib + libc.
         exe.root_module.linkSystemLibrary("X11", .{});
+        exe.root_module.link_libc = true;
+    } else if (target.result.os.tag == .macos) {
+        // Cocoa backend: AppKit / Foundation / CoreGraphics frameworks.
+        // The skeleton stubs every function with @panic so no symbols from
+        // these frameworks are actually referenced until a real implementation
+        // is written.  Listing them here ensures the linker invocation is
+        // correct from day one and avoids the need for build.zig edits later.
+        exe.root_module.linkFramework("Cocoa", .{});
+        exe.root_module.linkFramework("Foundation", .{});
+        exe.root_module.linkFramework("CoreGraphics", .{});
         exe.root_module.link_libc = true;
     }
 
