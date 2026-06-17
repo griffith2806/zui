@@ -695,10 +695,10 @@ pub fn main(init: std.process.Init) !void {
 fn buildAccessibilityTree(
     app:            *zui.Application,
     page:           Page,
-    controls:       *const ControlsState,
+    controls:       *ControlsState,
     inputs:         *const InputsState,
-    animations:     *const AnimationsState,
-    overlays:       *const OverlaysState,
+    animations:     *AnimationsState,
+    overlays:       *OverlaysState,
     about_expanded: bool,
     nav_rects:      []const zui.Rect,
 ) void {
@@ -736,12 +736,56 @@ fn buildAccessibilityTree(
         .controls => {
             if (n < nodes.len) { nodes[n] = controls.field_search.accessNode("Search", zui.Rect.init(lx, base + 40, 300, 34)); n += 1; }
             if (n < nodes.len) { nodes[n] = controls.field_name.accessNode("Name", zui.Rect.init(lx, base + 100, 280, 34)); n += 1; }
-            if (n < nodes.len) { nodes[n] = controls.btn_inc.accessNode(zui.Rect.init(lx, base + 170, 130, 34), false); n += 1; }
-            if (n < nodes.len) { nodes[n] = controls.btn_reset.accessNode(zui.Rect.init(lx + 140, base + 170, 100, 34), false); n += 1; }
-            if (n < nodes.len) { nodes[n] = controls.btn_theme.accessNode(zui.Rect.init(lx, base + 214, 160, 34), false); n += 1; }
+            // Buttons — wire IInvokeProvider callbacks so AT can activate them.
+            if (n < nodes.len) {
+                var nd = controls.btn_inc.accessNode(zui.Rect.init(lx, base + 170, 130, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &controls.btn_inc;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = controls.btn_reset.accessNode(zui.Rect.init(lx + 140, base + 170, 100, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &controls.btn_reset;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = controls.btn_theme.accessNode(zui.Rect.init(lx, base + 214, 160, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &controls.btn_theme;
+                nodes[n] = nd; n += 1;
+            }
             if (n < nodes.len) { nodes[n] = controls.slider_vol.accessNode(zui.Rect.init(lx, base + 278, 300, 30), false); n += 1; }
-            if (n < nodes.len) { nodes[n] = controls.cb_notify.accessNode(lx, base + 328, false); n += 1; }
-            if (n < nodes.len) { nodes[n] = controls.cb_compact.accessNode(lx, base + 363, false); n += 1; }
+            // Checkboxes — wire IToggleProvider callbacks.
+            if (n < nodes.len) {
+                var nd = controls.cb_notify.accessNode(lx, base + 328, false);
+                nd.toggle_fn = struct { fn f(ctx: *anyopaque) void {
+                    const cb: *zui.Checkbox = @ptrCast(@alignCast(ctx));
+                    cb.checked = !cb.checked;
+                    cb.changed.emit(cb.checked);
+                }}.f;
+                nd.ctx = &controls.cb_notify;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = controls.cb_compact.accessNode(lx, base + 363, false);
+                nd.toggle_fn = struct { fn f(ctx: *anyopaque) void {
+                    const cb: *zui.Checkbox = @ptrCast(@alignCast(ctx));
+                    cb.checked = !cb.checked;
+                    cb.changed.emit(cb.checked);
+                }}.f;
+                nd.ctx = &controls.cb_compact;
+                nodes[n] = nd; n += 1;
+            }
             if (n < nodes.len) { nodes[n] = controls.tabs.accessNode(zui.Rect.init(rx, base + 20, 340, 40)); n += 1; }
             if (n < nodes.len) { nodes[n] = controls.pb.accessNode(zui.Rect.init(rx, base + 142, 320, 8)); n += 1; }
         },
@@ -751,15 +795,55 @@ fn buildAccessibilityTree(
             if (n < nodes.len) { nodes[n] = inputs.dropdown.accessNode(zui.Rect.init(lx + 380, base + 278, 260, 36), false); n += 1; }
         },
         .overlays => {
-            if (n < nodes.len) { nodes[n] = overlays.dialog_btn.accessNode(zui.Rect.init(lx, base + 40, 140, 34), false); n += 1; }
-            if (n < nodes.len) { nodes[n] = overlays.menu_btn.accessNode(zui.Rect.init(rx, base + 40, 140, 34), false); n += 1; }
+            if (n < nodes.len) {
+                var nd = overlays.dialog_btn.accessNode(zui.Rect.init(lx, base + 40, 140, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &overlays.dialog_btn;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = overlays.menu_btn.accessNode(zui.Rect.init(rx, base + 40, 140, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &overlays.menu_btn;
+                nodes[n] = nd; n += 1;
+            }
             if (overlays.dialog.visible) n += overlays.dialog.accessNodes(zui.Rect.init(0, 0, W, H), nodes[n..]);
             if (overlays.menu.open)      n += overlays.menu.accessNodes(nodes[n..]);
         },
         .animations => {
-            if (n < nodes.len) { nodes[n] = animations.btn_play.accessNode(zui.Rect.init(lx, base + 20, 100, 30), false); n += 1; }
-            if (n < nodes.len) { nodes[n] = animations.btn_rev.accessNode(zui.Rect.init(lx + 110, base + 20, 110, 30), false); n += 1; }
-            if (n < nodes.len) { nodes[n] = animations.btn_color.accessNode(zui.Rect.init(lx + 220, base + 304, 120, 34), false); n += 1; }
+            if (n < nodes.len) {
+                var nd = animations.btn_play.accessNode(zui.Rect.init(lx, base + 20, 100, 30), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &animations.btn_play;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = animations.btn_rev.accessNode(zui.Rect.init(lx + 110, base + 20, 110, 30), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &animations.btn_rev;
+                nodes[n] = nd; n += 1;
+            }
+            if (n < nodes.len) {
+                var nd = animations.btn_color.accessNode(zui.Rect.init(lx + 220, base + 304, 120, 34), false);
+                nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
+                    const btn: *zui.Button = @ptrCast(@alignCast(ctx));
+                    btn.clicked.emit({});
+                }}.f;
+                nd.ctx = &animations.btn_color;
+                nodes[n] = nd; n += 1;
+            }
         },
         .about => {
             if (n < nodes.len) {
