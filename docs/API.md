@@ -49,6 +49,9 @@ zui.Theme             // dark/light preset, runtime toggle
 zui.Style             // per-widget style override (fg/bg/border/radius/padding/font)
 zui.Stylesheet        // .zss flat CSS parser
 zui.Font              // font descriptor (family/size/weight/style)
+zui.PseudoState       // packed u8 bitfield: hover/focus/disabled/active/checked
+zui.PseudoStateTag    // enum for indexing WidgetStylesheet overrides
+zui.WidgetStylesheet  // zero-alloc base+per-pseudo-state style resolver
 // Layout
 zui.Rect              // i32 x/y, u32 width/height
 zui.Point             // i32 x/y
@@ -325,6 +328,98 @@ const ss = try zui.Stylesheet.parse(
 const style = ss.style;
 ```
 
+### PseudoState / WidgetStylesheet
+
+Pseudo-state support lets widgets display different styles for `:hover`, `:focus`, `:active`, `:disabled`, and `:checked` states — with zero allocations.
+
+#### PseudoState
+
+A `packed struct(u8)` bitfield. Set any combination of flags; combine with a struct literal.
+
+```zig
+pub const PseudoState = packed struct(u8) {
+    hover:    bool = false,
+    focus:    bool = false,
+    disabled: bool = false,
+    active:   bool = false,
+    checked:  bool = false,
+    // ...
+
+    pub fn bits(self: PseudoState) u8         // raw backing byte
+    pub fn isDefault(self: PseudoState) bool  // true when all flags are clear
+};
+
+// examples
+const ps = PseudoState{ .hover = true };
+const ps2 = PseudoState{ .hover = true, .focus = true };
+```
+
+#### PseudoStateTag
+
+Enum used to index into `WidgetStylesheet.overrides`. Values: `.hover`, `.focus`, `.disabled`, `.active`, `.checked`.
+
+```zig
+pub const PseudoStateTag = enum(usize) { hover, focus, disabled, active, checked };
+```
+
+#### WidgetStylesheet
+
+Zero-allocation stack struct holding a base `Style` plus up to five per-pseudo-state overrides.
+
+```zig
+pub const WidgetStylesheet = struct {
+    base:      Style                          = .{},
+    overrides: [5]?Style                      = .{null} ** 5,
+
+    pub fn setOverride(self: *WidgetStylesheet, which: PseudoStateTag, style: Style) void
+    pub fn getOverride(self: *const WidgetStylesheet, which: PseudoStateTag) ?Style
+    pub fn resolve(self: *const WidgetStylesheet, pseudo: PseudoState) Style
+};
+```
+
+**`resolve` application order** (later wins):
+```
+base -> hover -> focus -> active -> disabled -> checked
+```
+
+`disabled` is applied after `hover` so a disabled widget cannot appear interactive.
+
+Usage:
+```zig
+var ss = zui.WidgetStylesheet{};
+ss.base = zui.Style{ .bg = zui.Color.rgb(45, 45, 48), .fg = zui.Color.white };
+ss.setOverride(.hover,    zui.Style{ .bg = zui.Color.rgb(62, 62, 66) });
+ss.setOverride(.active,   zui.Style{ .bg = zui.Color.rgb(28, 28, 28) });
+ss.setOverride(.disabled, zui.Style{ .bg = zui.Color.rgb(20, 20, 20), .fg = zui.Color.rgb(80, 80, 80) });
+
+var btn = zui.Button{ .label = "Click me", .stylesheet = ss };
+// In the draw loop, btn.draw() automatically calls ss.resolve(btn.pseudoState())
+```
+
+#### Button pseudo-state integration
+
+`Button` tracks `hovered`, `pressed`, and `focused` booleans and provides:
+
+```zig
+pub fn pseudoState(self: *const Button) PseudoState
+    // Returns PseudoState{ .hover=hovered, .focus=focused, .active=pressed }
+```
+
+When `Button.stylesheet` is non-null, `draw()` calls `stylesheet.resolve(pseudoState())` to pick the effective style. When `stylesheet` is null (the default), the legacy `ButtonStyle` path is used unchanged — existing code needs no changes.
+
+```zig
+// Legacy style (unchanged, backward-compatible):
+var btn = zui.Button{ .label = "OK", .style = .{ .bg = zui.Color.rgb(0, 120, 212) } };
+
+// New stylesheet style:
+var ss = zui.WidgetStylesheet{};
+ss.base = zui.Style{ .bg = zui.Color.rgb(0, 120, 212) };
+ss.setOverride(.hover, zui.Style{ .bg = zui.Color.rgb(16, 137, 229) });
+var btn2 = zui.Button{ .label = "OK", .stylesheet = ss };
+```
+
+---
+
 ### Font
 
 Descriptor for font selection. Not yet wired to the GDI renderer (renderer uses Segoe UI Variable internally); use `drawTextScaled` with a `scale` parameter to approximate size differences.
@@ -367,17 +462,21 @@ Some widgets need `deinit(alloc)` because they allocate (Signal slots or text bu
 
 ```zig
 pub const Button = struct {
-    label:   []const u8,
-    style:   ButtonStyle = .{},
-    hovered: bool = false,
-    pressed: bool = false,
-    clicked: Signal(void) = .{},
+    label:      []const u8,
+    style:      ButtonStyle       = .{},          // legacy colour overrides (always backward-compat)
+    stylesheet: ?WidgetStylesheet = null,         // pseudo-state stylesheet; takes precedence when non-null
+    hovered:    bool = false,
+    pressed:    bool = false,
+    focused:    bool = false,                     // set by focus_gained / focus_lost events
+    clicked:    Signal(void) = .{},
 
     pub fn deinit(self: *Button, alloc: Allocator) void
     pub fn update(self: *Button, dt_s: f32) void
     pub fn draw(self: *const Button, r: *Renderer, rect: Rect) void
     pub fn handleEvent(self: *Button, event: Event, rect: Rect) bool  // returns true on click
     pub fn preferredSize(self: *const Button, r: *const Renderer) Size
+    pub fn pseudoState(self: *const Button) PseudoState
+        // Returns PseudoState{ .hover=hovered, .focus=focused, .active=pressed }
 };
 
 pub const ButtonStyle = struct {
