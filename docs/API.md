@@ -510,10 +510,12 @@ try btn.clicked.connect(alloc, &my_state,
 
 ```zig
 pub const TextField = struct {
-    text:    std.ArrayListUnmanaged(u8) = .empty,
-    cursor:  usize = 0,
-    focused: bool  = false,
-    hovered: bool  = false,
+    text:        std.ArrayListUnmanaged(u8) = .empty,
+    cursor:      usize        = 0,
+    focused:     bool         = false,
+    hovered:     bool         = false,
+    ime_active:  bool         = false,   // true during an IME composition session
+    composition: []const u8   = "",      // NOT owned — points into event payload; cleared on ime_end
 
     pub fn deinit(self: *TextField, alloc: Allocator) void
     pub fn draw(self: *const TextField, r: *Renderer, rect: Rect, theme: Theme) void
@@ -523,6 +525,8 @@ pub const TextField = struct {
 ```
 
 Handled keys: `Backspace`, `Delete`, `Left`, `Right`, `Home`, `End`, `Escape`/`Tab` (defocus), `Ctrl+A` (select all / cursor to end), `Ctrl+C` (copy), `Ctrl+V` (paste), `Ctrl+X` (cut).
+
+IME events handled: `ime_start` (sets `ime_active`), `ime_composition` (stores candidate string, draws underlined after cursor), `ime_end` (clears `ime_active` and composition). Committed text arrives as normal `char_input` events and is appended to `text`.
 
 **Enter key is NOT handled** — detect it yourself:
 ```zig
@@ -1004,18 +1008,31 @@ _ = full.get();        // recomputed — source change set dirty flag
 
 ```zig
 pub const Event = union(enum) {
-    mouse_press:   MouseEvent,
-    mouse_release: MouseEvent,
-    mouse_move:    MouseMoveEvent,
-    key_press:     KeyEvent,
-    key_release:   KeyEvent,
-    char_input:    u21,      // Unicode codepoint — use for text input
-    resize:        ResizeEvent,
-    scroll:        ScrollEvent,
-    close:         void,
-    paint:         void,
-    focus_gained:  void,
-    focus_lost:    void,
+    mouse_press:     MouseEvent,
+    mouse_release:   MouseEvent,
+    mouse_move:      MouseMoveEvent,
+    key_press:       KeyEvent,
+    key_release:     KeyEvent,
+    char_input:      u21,             // Unicode codepoint — use for text input
+    resize:          ResizeEvent,
+    scroll:          ScrollEvent,
+    close:           void,
+    paint:           void,
+    focus_gained:    void,
+    focus_lost:      void,
+    ime_start:       void,            // WM_IME_STARTCOMPOSITION — composition session began
+    ime_composition: ImeComposition,  // WM_IME_COMPOSITION — in-progress candidate string
+    ime_end:         void,            // WM_IME_ENDCOMPOSITION — session ended (or committed)
+};
+
+pub const ImeComposition = struct {
+    /// In-progress candidate string (UTF-8, heap-allocated, owned by the event dispatch layer).
+    /// Do NOT free this slice — it is freed when replaced by the next ime_composition or on ime_end.
+    composition: []const u8,
+    /// Cursor byte offset within the composition string.
+    cursor:      usize,
+    /// True when GCS_RESULTSTR fired — the composition was committed (followed by ime_end).
+    committed:   bool,
 };
 
 pub const MouseEvent     = struct { x: i32, y: i32, button: MouseButton, modifiers: Modifiers };
@@ -1043,6 +1060,11 @@ unknown
 ```
 
 **char_input vs key_press**: Use `char_input` for typed text (handles layout, dead keys, Unicode). Use `key_press` for action keys (Enter, Escape, arrows, shortcuts).
+
+**IME / CJK input**: When a CJK input method (e.g. Chinese Pinyin, Japanese IME) is active, the OS delivers three event types instead of `char_input`:
+- `ime_start` — composition session started; suppress cursor blink, show composition area.
+- `ime_composition` — candidate string updated; draw `ImeComposition.composition` underlined after the cursor.
+- `ime_end` — session ended; clear composition display. Committed text arrives as regular `char_input` events just before `ime_end`.
 
 ---
 

@@ -11,21 +11,15 @@ const AccessNode = @import("../accessibility/node.zig").AccessNode;
 pub const TextField = struct {
     text:       std.ArrayListUnmanaged(u8) = .empty,
     cursor:     usize = 0,
-    view_start: usize = 0,  // byte offset: scroll left until cursor is visible
+    view_start: usize = 0,
     focused:    bool  = false,
     hovered:    bool  = false,
-
-    // IME / CJK composition state.
-    // When `ime_active` is true, `ime_composition` holds the provisional string
-    // that is being composed but not yet committed.  It is rendered inline after
-    // the committed text and is also reflected in `accessNode()` so UIA screen
-    // readers can announce the in-progress composition.
-    ime_active:      bool                           = false,
-    ime_composition: std.ArrayListUnmanaged(u8)     = .empty,
-    // Scratch buffer used by accessNode() to concatenate committed + composition
-    // text into a single contiguous slice for the UIA value field.  Grown as
-    // needed; never shrunk so subsequent frames are allocation-free once stable.
-    _value_scratch:  std.ArrayListUnmanaged(u8)     = .empty,
+    // IME composition state — provisional string held in owned buffer.
+    // When ime_active, rendered inline after committed text with underline.
+    // Also reflected in accessNode() value so UIA screen readers see it.
+    ime_active:      bool                       = false,
+    ime_composition: std.ArrayListUnmanaged(u8) = .empty,
+    _value_scratch:  std.ArrayListUnmanaged(u8) = .empty,
 
     pub fn deinit(self: *TextField, alloc: std.mem.Allocator) void {
         self.text.deinit(alloc);
@@ -110,17 +104,13 @@ pub const TextField = struct {
             r.drawText("Type here...", tx, ty, theme.input_hint);
         }
 
-        if (self.focused) {
-            // While IME is active the text cursor is suppressed — the IME candidate
-            // window shows its own cursor position indicator.
-            if (!self.ime_active) {
-                const pre = if (self.cursor > self.view_start)
-                    committed[self.view_start..self.cursor]
-                else
-                    "";
-                const cursor_x = tx + @as(i32, @intCast(r.textWidth(pre)));
-                r.fillRect(Rect.init(cursor_x, ty, 1, 16), theme.fg);
-            }
+        if (self.focused and !self.ime_active) {
+            const pre = if (self.cursor > self.view_start)
+                committed[self.view_start..self.cursor]
+            else
+                "";
+            const cursor_x = tx + @as(i32, @intCast(r.textWidth(pre)));
+            r.fillRect(Rect.init(cursor_x, ty, 1, 16), theme.fg);
         }
     }
 
@@ -159,9 +149,14 @@ pub const TextField = struct {
                 self.cursor += len;
                 return true;
             },
+            .ime_start => {
+                if (!self.focused) return false;
+                self.ime_active = true;
+                self.ime_composition.clearRetainingCapacity();
+                return true;
+            },
             .ime_composition => |*ic| {
                 if (!self.focused) return false;
-                // Replace the current provisional composition with the new one.
                 self.ime_active = true;
                 self.ime_composition.clearRetainingCapacity();
                 self.ime_composition.appendSlice(alloc, ic.text()) catch {};
@@ -169,7 +164,6 @@ pub const TextField = struct {
             },
             .ime_cancel => {
                 if (!self.focused) return false;
-                // IME cancelled without committing — clear composition state.
                 self.ime_active = false;
                 self.ime_composition.clearRetainingCapacity();
                 return true;

@@ -92,9 +92,11 @@ pub const Event = union(enum) {
     key_press: KeyEvent,
     key_release: KeyEvent,
     char_input: u21,
+    /// IME session is beginning — widget can prepare composition display.
+    ime_start: void,
     /// IME composition update — `text` is the provisional (uncommitted) string.
     ime_composition: ImeCompositionEvent,
-    /// IME session ended without committing (e.g. user pressed Escape in the IME).
+    /// IME session ended (committed via char_input or cancelled via Escape).
     ime_cancel: void,
     resize: ResizeEvent,
     scroll: ScrollEvent,
