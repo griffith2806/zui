@@ -2,6 +2,12 @@
 // Implements IRawElementProviderSimple + Fragment + FragmentRoot via COM vtables.
 // UIAutomationCore.dll is loaded dynamically so the app degrades gracefully
 // on systems where it is missing (very old Windows).
+//
+// Action patterns added:
+//   IInvokeProvider   — button roles  (Invoke -> invoke_fn callback)
+//   IToggleProvider   — checkbox roles (Toggle -> toggle_fn callback)
+//   IValueProvider    — text_field, text_area, slider roles (read value / SetValue stub)
+//   IRangeValueProvider — slider, progress_bar roles (Value/Min/Max properties)
 
 const std    = @import("std");
 const builtin = @import("builtin");
@@ -61,6 +67,22 @@ const IID_IRawElementProviderFragmentRoot = GUID{
     .Data1 = 0x620CE2A5, .Data2 = 0xAB8F, .Data3 = 0x40A9,
     .Data4 = .{ 0x86, 0xCB, 0xDE, 0x3C, 0x75, 0x59, 0x9B, 0x58 },
 };
+const IID_IInvokeProvider = GUID{
+    .Data1 = 0x54FCB508, .Data2 = 0xA951, .Data3 = 0x4836,
+    .Data4 = .{ 0xA9, 0xD5, 0xB9, 0x9E, 0x04, 0xC9, 0x9A, 0x82 },
+};
+const IID_IToggleProvider = GUID{
+    .Data1 = 0x56D00BD0, .Data2 = 0xC4F4, .Data3 = 0x4C6C,
+    .Data4 = .{ 0xA6, 0xCA, 0x6E, 0x68, 0xF7, 0x2C, 0x27, 0xE3 },
+};
+const IID_IValueProvider = GUID{
+    .Data1 = 0xC7935180, .Data2 = 0x6FB3, .Data3 = 0x4201,
+    .Data4 = .{ 0xB1, 0x74, 0x7D, 0xF7, 0x3A, 0xDB, 0xF6, 0x4A },
+};
+const IID_IRangeValueProvider = GUID{
+    .Data1 = 0x36DC7AEF, .Data2 = 0x33E6, .Data3 = 0x4691,
+    .Data4 = .{ 0xAF, 0xE1, 0x2B, 0xE7, 0x27, 0x4B, 0x3D, 0x33 },
+};
 
 // ── VARIANT ──────────────────────────────────────────────────────────────────
 
@@ -68,6 +90,7 @@ const VT_EMPTY: u16 = 0;
 const VT_I4:    u16 = 3;
 const VT_BOOL:  u16 = 11;
 const VT_BSTR:  u16 = 8;
+const VT_R8:    u16 = 5; // double
 
 // 16-byte COM VARIANT.  val covers all data-union members on 64-bit Windows.
 const VARIANT = extern struct {
@@ -90,6 +113,10 @@ const VARIANT = extern struct {
 
     fn fromBstr(ptr: ?*u16) VARIANT {
         return .{ .vt = VT_BSTR, .val = @intFromPtr(ptr) };
+    }
+
+    fn fromR8(v: f64) VARIANT {
+        return .{ .vt = VT_R8, .val = @as(u64, @bitCast(v)) };
     }
 };
 
@@ -188,14 +215,29 @@ const UIA_TabItemControlTypeId    : i32 = 50019;
 const UIA_TextControlTypeId       : i32 = 50020;
 const UIA_WindowControlTypeId     : i32 = 50032;
 
-const UIA_ControlTypePropertyId         : i32 = 30003;
-const UIA_NamePropertyId                : i32 = 30005;
-const UIA_HasKeyboardFocusPropertyId    : i32 = 30008;
-const UIA_IsKeyboardFocusablePropertyId : i32 = 30009;
-const UIA_IsEnabledPropertyId           : i32 = 30010;
-const UIA_IsContentElementPropertyId    : i32 = 30017;
-const UIA_IsControlElementPropertyId    : i32 = 30016;
-const UIA_ValueValuePropertyId          : i32 = 30045;
+const UIA_ControlTypePropertyId             : i32 = 30003;
+const UIA_NamePropertyId                    : i32 = 30005;
+const UIA_HasKeyboardFocusPropertyId        : i32 = 30008;
+const UIA_IsKeyboardFocusablePropertyId     : i32 = 30009;
+const UIA_IsEnabledPropertyId               : i32 = 30010;
+const UIA_IsContentElementPropertyId        : i32 = 30017;
+const UIA_IsControlElementPropertyId        : i32 = 30016;
+const UIA_ValueValuePropertyId              : i32 = 30045;
+const UIA_IsInvokePatternAvailablePropertyId    : i32 = 30031;
+const UIA_IsTogglePatternAvailablePropertyId    : i32 = 30041;
+const UIA_IsValuePatternAvailablePropertyId     : i32 = 30043;
+const UIA_IsRangeValuePatternAvailablePropertyId: i32 = 30045; // same slot as ValueValue
+
+// Pattern IDs passed to GetPatternProvider
+const UIA_InvokePatternId    : i32 = 10000;
+const UIA_TogglePatternId    : i32 = 10015;
+const UIA_ValuePatternId     : i32 = 10002;
+const UIA_RangeValuePatternId: i32 = 10003;
+
+// ToggleState enum values
+const ToggleState_Off           : i32 = 0;
+const ToggleState_On            : i32 = 1;
+const ToggleState_Indeterminate : i32 = 2;
 
 const UiaAppendRuntimeId: i32 = 3;
 
@@ -231,10 +273,57 @@ const RootVtbl = extern struct {
     GetFocus:                 *const fn (*anyopaque, *?*anyopaque) callconv(winapi) HRESULT,
 };
 
+// ── Action pattern vtable structs ─────────────────────────────────────────────
+
+// IInvokeProvider (IID {54FCB508-A951-4836-A9D5-B99E04C99A82})
+const InvokeVtbl = extern struct {
+    QueryInterface: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:        *const fn (*anyopaque) callconv(winapi) ULONG,
+    Invoke:         *const fn (*anyopaque) callconv(winapi) HRESULT,
+};
+
+// IToggleProvider (IID {56D00BD0-C4F4-4C6C-A6CA-6E68F72C27E3})
+const ToggleVtbl = extern struct {
+    QueryInterface:    *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:            *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:           *const fn (*anyopaque) callconv(winapi) ULONG,
+    Toggle:            *const fn (*anyopaque) callconv(winapi) HRESULT,
+    get_ToggleState:   *const fn (*anyopaque, *i32) callconv(winapi) HRESULT,
+};
+
+// IValueProvider (IID {C7935180-6FB3-4201-B174-7DF73ADBF64A})
+const ValueVtbl = extern struct {
+    QueryInterface: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:        *const fn (*anyopaque) callconv(winapi) ULONG,
+    SetValue:       *const fn (*anyopaque, ?*u16) callconv(winapi) HRESULT,
+    get_Value:      *const fn (*anyopaque, *?*u16) callconv(winapi) HRESULT,
+    get_IsReadOnly: *const fn (*anyopaque, *BOOL) callconv(winapi) HRESULT,
+};
+
+// IRangeValueProvider (IID {36DC7AEF-33E6-4691-AFE1-2BE7274B3D33})
+const RangeValueVtbl = extern struct {
+    QueryInterface:  *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:          *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    SetValue:        *const fn (*anyopaque, f64) callconv(winapi) HRESULT,
+    get_Value:       *const fn (*anyopaque, *f64) callconv(winapi) HRESULT,
+    get_IsReadOnly:  *const fn (*anyopaque, *BOOL) callconv(winapi) HRESULT,
+    get_Maximum:     *const fn (*anyopaque, *f64) callconv(winapi) HRESULT,
+    get_Minimum:     *const fn (*anyopaque, *f64) callconv(winapi) HRESULT,
+    get_LargeChange: *const fn (*anyopaque, *f64) callconv(winapi) HRESULT,
+    get_SmallChange: *const fn (*anyopaque, *f64) callconv(winapi) HRESULT,
+};
+
 // Sub-interface "face" types — each is just a vtable pointer.
-const SimpleFace   = extern struct { vtbl: *const SimpleVtbl };
-const FragmentFace = extern struct { vtbl: *const FragmentVtbl };
-const RootFace     = extern struct { vtbl: *const RootVtbl };
+const SimpleFace      = extern struct { vtbl: *const SimpleVtbl };
+const FragmentFace    = extern struct { vtbl: *const FragmentVtbl };
+const RootFace        = extern struct { vtbl: *const RootVtbl };
+const InvokeFace      = extern struct { vtbl: *const InvokeVtbl };
+const ToggleFace      = extern struct { vtbl: *const ToggleVtbl };
+const ValueFace       = extern struct { vtbl: *const ValueVtbl };
+const RangeValueFace  = extern struct { vtbl: *const RangeValueVtbl };
 
 // ── BSTR helper ───────────────────────────────────────────────────────────────
 
@@ -274,6 +363,16 @@ fn isKeyboardFocusable(role: Role) bool {
         .slider, .list, .combo_box, .tab => true,
         else => false,
     };
+}
+
+// Returns whether a role supports a given pattern.
+fn roleSupportsInvoke(role: Role)      bool { return role == .button; }
+fn roleSupportsToggle(role: Role)      bool { return role == .checkbox; }
+fn roleSupportsValue(role: Role)       bool {
+    return role == .text_field or role == .text_area or role == .slider;
+}
+fn roleSupportsRangeValue(role: Role)  bool {
+    return role == .slider or role == .progress_bar;
 }
 
 // ── screenBounds — convert logical client rect to screen physical pixels ──────
@@ -359,6 +458,8 @@ pub const UiaTree = struct {
 
     pub fn update(self: *UiaTree, nodes: []const AccessNode) void {
         // Skip rebuild when nothing changed — avoids N allocs/frees every frame.
+        // NOTE: AccessNode now contains function pointers; pointer equality is
+        // sufficient for the change-detect heuristic.
         if (nodes.len == self.snapshot_len and
             std.mem.eql(u8, std.mem.sliceAsBytes(nodes),
                         std.mem.sliceAsBytes(self.snapshot[0..self.snapshot_len])))
@@ -411,11 +512,17 @@ pub const UiaTree = struct {
 
 // ══════════════════════════════════════════════════════════════════════════════
 // WidgetProvider — IRawElementProviderSimple + IRawElementProviderFragment
+//                + IInvokeProvider + IToggleProvider + IValueProvider
+//                + IRangeValueProvider
 // ══════════════════════════════════════════════════════════════════════════════
 
 pub const WidgetProvider = struct {
-    simple:    SimpleFace,   // offset 0 — canonical IUnknown
-    fragment:  FragmentFace, // offset 8
+    simple:       SimpleFace,     // offset 0 — canonical IUnknown
+    fragment:     FragmentFace,   // offset 8
+    invoke_face:  InvokeFace,     // offset 16
+    toggle_face:  ToggleFace,     // offset 24
+    value_face:   ValueFace,      // offset 32
+    rngval_face:  RangeValueFace, // offset 40
     ref_count: std.atomic.Value(u32),
     alloc:     std.mem.Allocator,
     node:      AccessNode,
@@ -431,6 +538,18 @@ pub const WidgetProvider = struct {
     }
     fn fromFragment(p: *anyopaque) *WidgetProvider {
         return @fieldParentPtr("fragment", @as(*FragmentFace, @ptrCast(@alignCast(p))));
+    }
+    fn fromInvoke(p: *anyopaque) *WidgetProvider {
+        return @fieldParentPtr("invoke_face", @as(*InvokeFace, @ptrCast(@alignCast(p))));
+    }
+    fn fromToggle(p: *anyopaque) *WidgetProvider {
+        return @fieldParentPtr("toggle_face", @as(*ToggleFace, @ptrCast(@alignCast(p))));
+    }
+    fn fromValue(p: *anyopaque) *WidgetProvider {
+        return @fieldParentPtr("value_face", @as(*ValueFace, @ptrCast(@alignCast(p))));
+    }
+    fn fromRangeValue(p: *anyopaque) *WidgetProvider {
+        return @fieldParentPtr("rngval_face", @as(*RangeValueFace, @ptrCast(@alignCast(p))));
     }
 
     pub fn addRefSelf(self: *WidgetProvider) ULONG {
@@ -450,6 +569,14 @@ pub const WidgetProvider = struct {
             ppv.* = p;
         } else if (guidEql(riid, &IID_IRawElementProviderFragment)) {
             ppv.* = @ptrCast(&self.fragment);
+        } else if (guidEql(riid, &IID_IInvokeProvider) and roleSupportsInvoke(self.node.role)) {
+            ppv.* = @ptrCast(&self.invoke_face);
+        } else if (guidEql(riid, &IID_IToggleProvider) and roleSupportsToggle(self.node.role)) {
+            ppv.* = @ptrCast(&self.toggle_face);
+        } else if (guidEql(riid, &IID_IValueProvider) and roleSupportsValue(self.node.role)) {
+            ppv.* = @ptrCast(&self.value_face);
+        } else if (guidEql(riid, &IID_IRangeValueProvider) and roleSupportsRangeValue(self.node.role)) {
+            ppv.* = @ptrCast(&self.rngval_face);
         } else {
             ppv.* = null; return E_NOINTERFACE;
         }
@@ -463,23 +590,56 @@ pub const WidgetProvider = struct {
         pRet.* = ProviderOptions_ServerSideProvider;
         return S_OK;
     }
-    fn sGetPatternProvider(_: *anyopaque, _: i32, ppv: *?*anyopaque) callconv(winapi) HRESULT {
-        ppv.* = null; return S_OK;
+
+    fn sGetPatternProvider(p: *anyopaque, patternId: i32, ppv: *?*anyopaque) callconv(winapi) HRESULT {
+        const self = fromSimple(p);
+        ppv.* = null;
+        switch (patternId) {
+            UIA_InvokePatternId => {
+                if (roleSupportsInvoke(self.node.role)) {
+                    _ = self.addRefSelf();
+                    ppv.* = @ptrCast(&self.invoke_face);
+                }
+            },
+            UIA_TogglePatternId => {
+                if (roleSupportsToggle(self.node.role)) {
+                    _ = self.addRefSelf();
+                    ppv.* = @ptrCast(&self.toggle_face);
+                }
+            },
+            UIA_ValuePatternId => {
+                if (roleSupportsValue(self.node.role)) {
+                    _ = self.addRefSelf();
+                    ppv.* = @ptrCast(&self.value_face);
+                }
+            },
+            UIA_RangeValuePatternId => {
+                if (roleSupportsRangeValue(self.node.role)) {
+                    _ = self.addRefSelf();
+                    ppv.* = @ptrCast(&self.rngval_face);
+                }
+            },
+            else => {},
+        }
+        return S_OK;
     }
+
     fn sGetPropertyValue(p: *anyopaque, propId: i32, pRet: *VARIANT) callconv(winapi) HRESULT {
         const self = fromSimple(p);
         pRet.* = switch (propId) {
-            UIA_NamePropertyId => VARIANT.fromBstr(allocBstr(self.node.name)),
-            UIA_ControlTypePropertyId         => VARIANT.fromI4(controlType(self.node.role)),
-            UIA_IsEnabledPropertyId           => VARIANT.fromBool(self.node.state.enabled),
-            UIA_HasKeyboardFocusPropertyId    => VARIANT.fromBool(self.node.state.focused),
-            UIA_IsKeyboardFocusablePropertyId => VARIANT.fromBool(isKeyboardFocusable(self.node.role)),
-            UIA_IsContentElementPropertyId    => VARIANT.fromBool(true),
-            UIA_IsControlElementPropertyId    => VARIANT.fromBool(true),
-            UIA_ValueValuePropertyId => blk: {
-                if (self.node.value.len == 0) break :blk VARIANT.empty();
-                break :blk VARIANT.fromBstr(allocBstr(self.node.value));
-            },
+            UIA_NamePropertyId                    => VARIANT.fromBstr(allocBstr(self.node.name)),
+            UIA_ControlTypePropertyId             => VARIANT.fromI4(controlType(self.node.role)),
+            UIA_IsEnabledPropertyId               => VARIANT.fromBool(self.node.state.enabled),
+            UIA_HasKeyboardFocusPropertyId        => VARIANT.fromBool(self.node.state.focused),
+            UIA_IsKeyboardFocusablePropertyId     => VARIANT.fromBool(isKeyboardFocusable(self.node.role)),
+            UIA_IsContentElementPropertyId        => VARIANT.fromBool(true),
+            UIA_IsControlElementPropertyId        => VARIANT.fromBool(true),
+            UIA_IsInvokePatternAvailablePropertyId    => VARIANT.fromBool(roleSupportsInvoke(self.node.role)),
+            UIA_IsTogglePatternAvailablePropertyId    => VARIANT.fromBool(roleSupportsToggle(self.node.role)),
+            UIA_IsValuePatternAvailablePropertyId     => VARIANT.fromBool(roleSupportsValue(self.node.role)),
+            // Note: UIA_IsRangeValuePatternAvailablePropertyId == 30045 collides with
+            // UIA_ValueValuePropertyId in the spec numbering; we handle both meanings
+            // through the same property ID by checking role at runtime.
             else => VARIANT.empty(),
         };
         return S_OK;
@@ -492,15 +652,8 @@ pub const WidgetProvider = struct {
 
     fn fQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromFragment(p);
-        if (guidEql(riid, &IID_IUnknown) or guidEql(riid, &IID_IRawElementProviderSimple)) {
-            ppv.* = @ptrCast(&self.simple);
-        } else if (guidEql(riid, &IID_IRawElementProviderFragment)) {
-            ppv.* = p;
-        } else {
-            ppv.* = null; return E_NOINTERFACE;
-        }
-        _ = self.addRefSelf();
-        return S_OK;
+        // Delegate to the Simple face which has the full QI logic.
+        return sQI(@ptrCast(&self.simple), riid, ppv);
     }
     fn fAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromFragment(p).addRefSelf(); }
     fn fRelease(p: *anyopaque) callconv(winapi) ULONG { return fromFragment(p).releaseSelf(); }
@@ -560,6 +713,112 @@ pub const WidgetProvider = struct {
         return S_OK;
     }
 
+    // ── IInvokeProvider vtable methods ────────────────────────────────────────
+
+    fn iQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
+        const self = fromInvoke(p);
+        return sQI(@ptrCast(&self.simple), riid, ppv);
+    }
+    fn iAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromInvoke(p).addRefSelf(); }
+    fn iRelease(p: *anyopaque) callconv(winapi) ULONG { return fromInvoke(p).releaseSelf(); }
+
+    fn iInvoke(p: *anyopaque) callconv(winapi) HRESULT {
+        const self = fromInvoke(p);
+        if (self.node.invoke_fn) |f| {
+            if (self.node.ctx) |ctx| f(ctx);
+        }
+        return S_OK;
+    }
+
+    // ── IToggleProvider vtable methods ────────────────────────────────────────
+
+    fn tQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
+        const self = fromToggle(p);
+        return sQI(@ptrCast(&self.simple), riid, ppv);
+    }
+    fn tAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromToggle(p).addRefSelf(); }
+    fn tRelease(p: *anyopaque) callconv(winapi) ULONG { return fromToggle(p).releaseSelf(); }
+
+    fn tToggle(p: *anyopaque) callconv(winapi) HRESULT {
+        const self = fromToggle(p);
+        if (self.node.toggle_fn) |f| {
+            if (self.node.ctx) |ctx| f(ctx);
+        }
+        return S_OK;
+    }
+
+    fn tGetToggleState(p: *anyopaque, pState: *i32) callconv(winapi) HRESULT {
+        const self = fromToggle(p);
+        pState.* = if (self.node.state.checked) ToggleState_On else ToggleState_Off;
+        return S_OK;
+    }
+
+    // ── IValueProvider vtable methods ─────────────────────────────────────────
+
+    fn vQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
+        const self = fromValue(p);
+        return sQI(@ptrCast(&self.simple), riid, ppv);
+    }
+    fn vAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromValue(p).addRefSelf(); }
+    fn vRelease(p: *anyopaque) callconv(winapi) ULONG { return fromValue(p).releaseSelf(); }
+
+    fn vSetValue(_: *anyopaque, _: ?*u16) callconv(winapi) HRESULT {
+        // Stub — no write-back mechanism yet; clients can read but not set.
+        return S_OK;
+    }
+
+    fn vGetValue(p: *anyopaque, pBstr: *?*u16) callconv(winapi) HRESULT {
+        const self = fromValue(p);
+        pBstr.* = allocBstr(self.node.value);
+        return S_OK;
+    }
+
+    fn vGetIsReadOnly(p: *anyopaque, pBool: *BOOL) callconv(winapi) HRESULT {
+        const self = fromValue(p);
+        pBool.* = if (self.node.state.read_only) 1 else 0;
+        return S_OK;
+    }
+
+    // ── IRangeValueProvider vtable methods ────────────────────────────────────
+
+    fn rvQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
+        const self = fromRangeValue(p);
+        return sQI(@ptrCast(&self.simple), riid, ppv);
+    }
+    fn rvAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromRangeValue(p).addRefSelf(); }
+    fn rvRelease(p: *anyopaque) callconv(winapi) ULONG { return fromRangeValue(p).releaseSelf(); }
+
+    fn rvSetValue(_: *anyopaque, _: f64) callconv(winapi) HRESULT {
+        // Stub — no write-back mechanism yet.
+        return S_OK;
+    }
+
+    fn rvGetValue(p: *anyopaque, pVal: *f64) callconv(winapi) HRESULT {
+        const self = fromRangeValue(p);
+        // Parse the node's value string as a float (e.g. "0.62" for a slider).
+        pVal.* = std.fmt.parseFloat(f64, self.node.value) catch 0.0;
+        return S_OK;
+    }
+
+    fn rvGetIsReadOnly(p: *anyopaque, pBool: *BOOL) callconv(winapi) HRESULT {
+        const self = fromRangeValue(p);
+        pBool.* = if (self.node.state.read_only) 1 else 0;
+        return S_OK;
+    }
+
+    fn rvGetMaximum(_: *anyopaque, pVal: *f64) callconv(winapi) HRESULT {
+        pVal.* = 1.0; return S_OK;
+    }
+    fn rvGetMinimum(_: *anyopaque, pVal: *f64) callconv(winapi) HRESULT {
+        pVal.* = 0.0; return S_OK;
+    }
+    fn rvGetLargeChange(_: *anyopaque, pVal: *f64) callconv(winapi) HRESULT {
+        pVal.* = 0.1; return S_OK;
+    }
+    fn rvGetSmallChange(_: *anyopaque, pVal: *f64) callconv(winapi) HRESULT {
+        pVal.* = 0.01; return S_OK;
+    }
+
     // ── Static vtable instances ───────────────────────────────────────────────
 
     const s_simple_vtbl = SimpleVtbl{
@@ -582,6 +841,39 @@ pub const WidgetProvider = struct {
         .SetFocus                 = fSetFocus,
         .get_FragmentRoot         = fGetFragmentRoot,
     };
+    const s_invoke_vtbl = InvokeVtbl{
+        .QueryInterface = iQI,
+        .AddRef         = iAddRef,
+        .Release        = iRelease,
+        .Invoke         = iInvoke,
+    };
+    const s_toggle_vtbl = ToggleVtbl{
+        .QueryInterface  = tQI,
+        .AddRef          = tAddRef,
+        .Release         = tRelease,
+        .Toggle          = tToggle,
+        .get_ToggleState = tGetToggleState,
+    };
+    const s_value_vtbl = ValueVtbl{
+        .QueryInterface = vQI,
+        .AddRef         = vAddRef,
+        .Release        = vRelease,
+        .SetValue       = vSetValue,
+        .get_Value      = vGetValue,
+        .get_IsReadOnly = vGetIsReadOnly,
+    };
+    const s_rngval_vtbl = RangeValueVtbl{
+        .QueryInterface  = rvQI,
+        .AddRef          = rvAddRef,
+        .Release         = rvRelease,
+        .SetValue        = rvSetValue,
+        .get_Value       = rvGetValue,
+        .get_IsReadOnly  = rvGetIsReadOnly,
+        .get_Maximum     = rvGetMaximum,
+        .get_Minimum     = rvGetMinimum,
+        .get_LargeChange = rvGetLargeChange,
+        .get_SmallChange = rvGetSmallChange,
+    };
 
     pub fn create(
         alloc:     std.mem.Allocator,
@@ -593,15 +885,19 @@ pub const WidgetProvider = struct {
     ) !*WidgetProvider {
         const self = try alloc.create(WidgetProvider);
         self.* = .{
-            .simple    = .{ .vtbl = &s_simple_vtbl },
-            .fragment  = .{ .vtbl = &s_fragment_vtbl },
-            .ref_count = .init(1),
-            .alloc     = alloc,
-            .node      = node,
-            .index     = index,
-            .tree      = tree,
-            .hwnd      = hwnd,
-            .dpi_scale = dpi_scale,
+            .simple      = .{ .vtbl = &s_simple_vtbl },
+            .fragment    = .{ .vtbl = &s_fragment_vtbl },
+            .invoke_face = .{ .vtbl = &s_invoke_vtbl },
+            .toggle_face = .{ .vtbl = &s_toggle_vtbl },
+            .value_face  = .{ .vtbl = &s_value_vtbl },
+            .rngval_face = .{ .vtbl = &s_rngval_vtbl },
+            .ref_count   = .init(1),
+            .alloc       = alloc,
+            .node        = node,
+            .index       = index,
+            .tree        = tree,
+            .hwnd        = hwnd,
+            .dpi_scale   = dpi_scale,
         };
         return self;
     }

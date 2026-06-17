@@ -34,10 +34,19 @@ pub const State = struct {
 /// Platform-agnostic description of one UI element for assistive technologies.
 /// `bounds` are logical (device-independent) pixels in window-client coordinates.
 /// `name` and `value` are UTF-8 slices that must outlive the node.
+///
+/// Optional action callbacks let UIA patterns invoke real widget behaviour.
+/// All callback fields default to null so existing code requires no changes.
 pub const AccessNode = struct {
-    role:   Role,
-    name:   []const u8,
-    value:  []const u8 = "",
-    bounds: Rect,
-    state:  State = .{},
+    role:      Role,
+    name:      []const u8,
+    value:     []const u8 = "",
+    bounds:    Rect,
+    state:     State = .{},
+    /// Called by IInvokeProvider.Invoke() — typically emits a clicked signal.
+    invoke_fn: ?*const fn (ctx: *anyopaque) void = null,
+    /// Called by IToggleProvider.Toggle() — should flip the checked state.
+    toggle_fn: ?*const fn (ctx: *anyopaque) void = null,
+    /// Opaque pointer passed to invoke_fn / toggle_fn.
+    ctx:       ?*anyopaque = null,
 };
