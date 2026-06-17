@@ -870,7 +870,7 @@ const FileDialogsState = struct {
 // MAIN LOOP
 // ══════════════════════════════════════════════════════════════════════════════
 pub fn main(init: std.process.Init) !void {
-    const alloc = init.arena.allocator();
+    const alloc = init.gpa;
 
     var app = try zui.Application.init(alloc, .{
         .title  = "zui — Component Gallery",
