@@ -7,6 +7,15 @@ const Margin = geometry.Margin;
 
 pub const Direction = enum { horizontal, vertical };
 
+/// Pairs a preferred size with optional min/max clamps for use with
+/// `BoxLayout.computeConstrained`. `flex` is reserved for future use.
+pub const ItemConstraint = struct {
+    preferred: Size,
+    min: ?Size = null,
+    max: ?Size = null,
+    flex: u32  = 0,
+};
+
 pub const BoxLayout = struct {
     direction: Direction = .vertical,
     spacing:   u32       = 8,
@@ -100,6 +109,32 @@ pub const BoxLayout = struct {
         }
     }
 
+    /// Like `compute`, but each item carries optional min/max constraints that
+    /// clamp the preferred size before placement. `flex` is not used here —
+    /// items get exactly their (clamped) preferred size.
+    /// `out.len` must equal `constraints.len`.
+    pub fn computeConstrained(
+        self: BoxLayout,
+        bounds: Rect,
+        constraints: []const ItemConstraint,
+        out: []Rect,
+    ) void {
+        std.debug.assert(out.len == constraints.len);
+        var cursor_x: i32 = bounds.x + @as(i32, @intCast(self.padding.left));
+        var cursor_y: i32 = bounds.y + @as(i32, @intCast(self.padding.top));
+        for (constraints, 0..) |c, i| {
+            var w = c.preferred.width;
+            var h = c.preferred.height;
+            if (c.min) |mn| { w = @max(w, mn.width); h = @max(h, mn.height); }
+            if (c.max) |mx| { w = @min(w, mx.width); h = @min(h, mx.height); }
+            out[i] = Rect.init(cursor_x, cursor_y, w, h);
+            switch (self.direction) {
+                .vertical   => cursor_y += @as(i32, @intCast(h + self.spacing)),
+                .horizontal => cursor_x += @as(i32, @intCast(w + self.spacing)),
+            }
+        }
+    }
+
     /// Total space this layout needs to hold all `sizes` with spacing and padding.
     pub fn measure(self: BoxLayout, sizes: []const Size) Size {
         var total_w: u32 = self.padding.left + self.padding.right;
@@ -151,4 +186,23 @@ test "BoxLayout horizontal" {
     layout.compute(Rect.init(0, 0, 300, 50), &sizes, &rects);
     try std.testing.expectEqual(@as(i32, 0),  rects[0].x);
     try std.testing.expectEqual(@as(i32, 58), rects[1].x); // 0 + 50 + 8
+}
+
+test "BoxLayout computeConstrained clamps min/max" {
+    const layout = BoxLayout{ .direction = .vertical, .spacing = 4, .padding = Margin.all(0) };
+    const constraints = [_]ItemConstraint{
+        .{ .preferred = .{ .width = 100, .height = 10 }, .min = .{ .width = 100, .height = 20 } },
+        .{ .preferred = .{ .width = 100, .height = 50 }, .max = .{ .width = 100, .height = 30 } },
+        .{ .preferred = .{ .width = 100, .height = 25 } },
+    };
+    var rects: [3]Rect = undefined;
+    layout.computeConstrained(Rect.init(0, 0, 200, 300), &constraints, &rects);
+    // Item 0: preferred height 10 clamped up to min 20
+    try std.testing.expectEqual(@as(u32, 20), rects[0].height);
+    // Item 1: preferred height 50 clamped down to max 30; y = 0 + 20 + 4 = 24
+    try std.testing.expectEqual(@as(i32, 24), rects[1].y);
+    try std.testing.expectEqual(@as(u32, 30), rects[1].height);
+    // Item 2: preferred height 25 unclamped; y = 24 + 30 + 4 = 58
+    try std.testing.expectEqual(@as(i32, 58), rects[2].y);
+    try std.testing.expectEqual(@as(u32, 25), rects[2].height);
 }

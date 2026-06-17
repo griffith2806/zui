@@ -915,15 +915,22 @@ pub fn main(init: std.process.Init) !void {
     defer file_dialogs.deinit(alloc);
 
     var nav_rects: [NAV_ITEMS.len]zui.Rect = undefined;
-    for (0..NAV_ITEMS.len) |i|
-        nav_rects[i] = zui.Rect.init(8, HDR_H + 8 + @as(i32, @intCast(i)) * 44,
-                                     @intCast(NAV_W - 16), 38);
     var nav_hover_t: [NAV_ITEMS.len]f32  = .{0.0}   ** NAV_ITEMS.len;
     var nav_hovered: [NAV_ITEMS.len]bool = .{false}  ** NAV_ITEMS.len;
+
+    // ScrollArea state for tall pages
+    var about_scroll  = zui.ScrollArea{};
+    var colors_scroll = zui.ScrollArea{};
+    var layout_scroll = zui.ScrollArea{};
 
     while (!app.window.should_close) {
         const dt_s    = app.deltaSeconds();
         const win_rect = zui.Rect.init(0, 0, W, H);
+
+        // Recompute nav_rects every frame so they stay accurate after resize.
+        for (0..NAV_ITEMS.len) |i|
+            nav_rects[i] = zui.Rect.init(8, HDR_H + 8 + @as(i32, @intCast(i)) * 44,
+                                         @intCast(NAV_W - 16), 38);
 
         // ── Events ──────────────────────────────────────────────────────────
         var got_event   = false;
@@ -969,14 +976,28 @@ pub fn main(init: std.process.Init) !void {
                 .images       => images.handleEvent(ev, alloc),
                 .data_binding => data_binding.handleEvent(ev),
                 .file_dialogs => file_dialogs.handleEvent(ev, alloc),
-                .about        => switch (ev) {
-                    .mouse_press => |m| {
-                        const exp_y: i32 = HDR_H + 16 + 144 + 9 * 22 + 16;
-                        if (m.button == .left and
-                            zui.Rect.init(NAV_W + 24, exp_y, 500, 22).contains(.{ .x = m.x, .y = m.y }))
-                            about_expanded = !about_expanded;
-                    },
-                    else => {},
+                .about        => {
+                    const sa_rect = zui.Rect.init(NAV_W, HDR_H, W -| @as(u32, @intCast(NAV_W)), H -| @as(u32, @intCast(HDR_H)));
+                    _ = about_scroll.handleEvent(ev, sa_rect);
+                    switch (ev) {
+                        .mouse_press => |m| {
+                            // Offset the click test by the current scroll so the
+                            // expand/collapse hit-test works regardless of scroll position.
+                            const exp_y: i32 = HDR_H + 16 + 144 + 9 * 22 + 16 - about_scroll.scroll_offset;
+                            if (m.button == .left and
+                                zui.Rect.init(NAV_W + 24, exp_y, 500, 22).contains(.{ .x = m.x, .y = m.y }))
+                                about_expanded = !about_expanded;
+                        },
+                        else => {},
+                    }
+                },
+                .colors  => {
+                    const sa_rect = zui.Rect.init(NAV_W, HDR_H, W -| @as(u32, @intCast(NAV_W)), H -| @as(u32, @intCast(HDR_H)));
+                    _ = colors_scroll.handleEvent(ev, sa_rect);
+                },
+                .layout  => {
+                    const sa_rect = zui.Rect.init(NAV_W, HDR_H, W -| @as(u32, @intCast(NAV_W)), H -| @as(u32, @intCast(HDR_H)));
+                    _ = layout_scroll.handleEvent(ev, sa_rect);
                 },
                 else => {},
             }
@@ -1037,11 +1058,11 @@ pub fn main(init: std.process.Init) !void {
                 .controls     => controls.draw(&app.renderer, dark_mode, theme),
                 .inputs       => inputs.draw(&app.renderer, dark_mode),
                 .overlays     => overlays.draw(&app.renderer, dark_mode, zui.Rect.init(0, 0, W, H)),
-                .colors       => drawColors(&app.renderer, dark_mode),
-                .layout       => drawLayout(&app.renderer, dark_mode, theme),
+                .colors       => drawColors(&app.renderer, dark_mode, &colors_scroll, H),
+                .layout       => drawLayout(&app.renderer, dark_mode, theme, &layout_scroll, H),
                 .styles       => drawStyles(&app.renderer, dark_mode),
                 .animations   => animations.draw(&app.renderer, dark_mode),
-                .about        => drawAbout(&app.renderer, about_expanded, dark_mode),
+                .about        => drawAbout(&app.renderer, about_expanded, dark_mode, &about_scroll, H),
                 .images       => images.draw(&app.renderer, dark_mode),
                 .data_binding => data_binding.draw(&app.renderer, dark_mode),
                 .file_dialogs => file_dialogs.draw(&app.renderer, dark_mode),
@@ -1452,8 +1473,18 @@ fn drawDashboard(r: *zui.Renderer, counter: i32, dark_mode: bool) void {
 // ══════════════════════════════════════════════════════════════════════════════
 // PAGE: Colors
 // ══════════════════════════════════════════════════════════════════════════════
-fn drawColors(r: *zui.Renderer, dark_mode: bool) void {
-    const lx = cx(); const lcy = HDR_H + 16;
+fn drawColors(r: *zui.Renderer, dark_mode: bool, sa: *zui.ScrollArea, win_h: u32) void {
+    // Total content height for this page (bottom of lerp demo + margin)
+    const content_h: u32 = 60 + 338 + 20; // header_offset + content + margin
+    sa.content_height = content_h;
+
+    const sa_rect = zui.Rect.init(NAV_W, HDR_H, W -| @as(u32, @intCast(NAV_W)), win_h -| @as(u32, @intCast(HDR_H)));
+    sa.clampOffset(sa_rect);
+    const cr = sa.pushClip(r, sa_rect);
+    _ = cr;
+    const scroll = sa.scroll_offset;
+
+    const lx = cx(); const lcy = HDR_H + 16 - scroll;
     const base = lcy + 60;
 
     r.drawTextScaled("Colors", lx, lcy, if (dark_mode) FG else zui.Color.rgb(20,20,20), 2);
@@ -1497,13 +1528,26 @@ fn drawColors(r: *zui.Renderer, dark_mode: bool) void {
         r.fillRoundRect(zui.Rect.init(lx + @as(i32, @intCast(li)) * 34, base + 310, 32, 28), 4,
             ACCENT.lerp(zui.Color.rgb(196, 43, 28), t));
     }
+
+    sa.popClip(r);
+    sa.draw(r, sa_rect);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PAGE: Layout
 // ══════════════════════════════════════════════════════════════════════════════
-fn drawLayout(r: *zui.Renderer, dark_mode: bool, theme: zui.Theme) void {
-    const lx = cx(); const lcy = HDR_H + 16;
+fn drawLayout(r: *zui.Renderer, dark_mode: bool, theme: zui.Theme, sa: *zui.ScrollArea, win_h: u32) void {
+    // Total content height: base + 342 (flow) + 88 + 20 margin
+    const content_h: u32 = 60 + 342 + 88 + 20;
+    sa.content_height = content_h;
+
+    const sa_rect = zui.Rect.init(NAV_W, HDR_H, W -| @as(u32, @intCast(NAV_W)), win_h -| @as(u32, @intCast(HDR_H)));
+    sa.clampOffset(sa_rect);
+    const cr = sa.pushClip(r, sa_rect);
+    _ = cr;
+    const scroll = sa.scroll_offset;
+
+    const lx = cx(); const lcy = HDR_H + 16 - scroll;
     const base = lcy + 60;
     const rx: i32 = lx + 380;
     const cols = [3]zui.Color{ ACCENT, zui.Color.rgb(16,124,16), zui.Color.rgb(200,80,20) };
@@ -1578,13 +1622,26 @@ fn drawLayout(r: *zui.Renderer, dark_mode: bool, theme: zui.Theme) void {
     const inner = cpanel.contentRect(cpanel_b);
     r.drawText("Content rendered inside contentRect()", inner.x + 8, inner.y + 10, FG_SEC);
     r.drawText("Title bar is drawn by Container.draw()", inner.x + 8, inner.y + 30, FG_TER);
+
+    sa.popClip(r);
+    sa.draw(r, sa_rect);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PAGE: About
 // ══════════════════════════════════════════════════════════════════════════════
-fn drawAbout(r: *zui.Renderer, about_expanded: bool, dark_mode: bool) void {
-    const lx = cx(); const lcy = HDR_H + 16;
+fn drawAbout(r: *zui.Renderer, about_expanded: bool, dark_mode: bool, sa: *zui.ScrollArea, win_h: u32) void {
+    // Compute total content height (collapsed: ~380, expanded: ~480)
+    const base_h: u32 = 144 + 9 * 22 + 16 + 30 + 16; // header + items + expand row + margin
+    const expanded_h: u32 = if (about_expanded) 5 * 20 + 16 else 0;
+    sa.content_height = base_h + expanded_h;
+
+    const sa_rect = zui.Rect.init(NAV_W, HDR_H, W -| @as(u32, @intCast(NAV_W)), win_h -| @as(u32, @intCast(HDR_H)));
+    sa.clampOffset(sa_rect);
+    _ = sa.pushClip(r, sa_rect);
+    const scroll = sa.scroll_offset;
+
+    const lx = cx(); const lcy = HDR_H + 16 - scroll;
 
     r.drawTextScaled("zui", lx, lcy + 10, ACCENT, 5);
     const logo_w: i32 = @intCast(r.textWidthScaled("zui", 5));
@@ -1630,6 +1687,9 @@ fn drawAbout(r: *zui.Renderer, about_expanded: bool, dark_mode: bool) void {
         for (arch, 0..) |line, i|
             r.drawText(line, lx + 12, expand_y + 28 + @as(i32, @intCast(i)) * 20, FG_TER);
     }
+
+    sa.popClip(r);
+    sa.draw(r, sa_rect);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

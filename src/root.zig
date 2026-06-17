@@ -30,8 +30,9 @@ pub const Rect        = @import("layout/geometry.zig").Rect;
 pub const Point       = @import("layout/geometry.zig").Point;
 pub const Size        = @import("layout/geometry.zig").Size;
 pub const Margin      = @import("layout/geometry.zig").Margin;
-pub const BoxLayout   = @import("layout/box.zig").BoxLayout;
-pub const Direction   = @import("layout/box.zig").Direction;
+pub const BoxLayout      = @import("layout/box.zig").BoxLayout;
+pub const Direction      = @import("layout/box.zig").Direction;
+pub const ItemConstraint = @import("layout/box.zig").ItemConstraint;
 pub const GridLayout  = @import("layout/grid.zig").GridLayout;
 pub const FlowLayout  = @import("layout/flow.zig").FlowLayout;
 
