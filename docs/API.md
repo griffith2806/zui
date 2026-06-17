@@ -92,6 +92,10 @@ zui.Tween             // exponential-decay lerp (used internally by widgets)
 zui.Image             // owned pixel buffer with draw/scale support
 // Focus
 zui.FocusManager      // Tab-key focus ring across widgets
+// Builder DSL
+zui.WidgetTag         // enum { button, label, text_field, checkbox, list_view, hbox, vbox }
+zui.WidgetType(tag)   // comptime fn — returns the struct type for a WidgetTag
+zui.ui(tag, opts)     // comptime factory — constructs a widget from a tag + anonymous opts struct
 ```
 
 ---
@@ -1083,6 +1087,98 @@ pub fn main(init: std.process.Init) !void {
 
 ---
 
+## Builder DSL (`zui.ui`)
+
+`src/core/builder.zig` provides a zero-cost comptime factory for constructing
+widget structs declaratively, without naming each type explicitly.
+
+### Types
+
+```zig
+pub const WidgetTag = enum {
+    button, label, text_field, checkbox, list_view, hbox, vbox,
+};
+
+pub fn WidgetType(comptime tag: WidgetTag) type { ... }  // returns the struct type
+pub fn ui(comptime tag: WidgetTag, opts: anytype) WidgetType(tag) { ... }
+```
+
+All three are exported from `src/root.zig` as `zui.WidgetTag`, `zui.WidgetType`,
+and `zui.ui`.
+
+### How it works
+
+`ui(tag, opts)` maps `tag` to the matching struct type (`Button`, `Label`,
+`BoxLayout`, …) and copies matching fields from `opts`.  Unrecognised fields in
+`opts` (for example a `children` key) are silently ignored.  Fields absent from
+`opts` that have a struct default value are initialised to that default.
+
+Because the mapping is resolved entirely at comptime, the generated code is
+identical to writing `Button{ .label = "Click" }` by hand.
+
+### Usage
+
+```zig
+const zui = @import("zui");
+
+// Simple widgets
+const btn = zui.ui(.button, .{ .label = "Click me" });
+const lbl = zui.ui(.label,  .{ .text  = "Hello" });
+
+// Layout containers (direction is preset automatically)
+const vb = zui.ui(.vbox, .{ .spacing = 8 });
+const hb = zui.ui(.hbox, .{ .spacing = 4 });
+
+// Override ButtonStyle fields
+const accent_btn = zui.ui(.button, .{
+    .label = "Accent",
+    .style = zui.ButtonStyle{
+        .bg       = zui.Color.rgb(0, 103, 192),
+        .bg_hover = zui.Color.rgb(0, 120, 215),
+        .fg       = zui.Color.white,
+    },
+});
+
+// DSL with ignored `children` key (for future tree construction)
+const row = zui.ui(.hbox, .{
+    .spacing  = 12,
+    .children = .{
+        zui.ui(.button, .{ .label = "A" }),
+        zui.ui(.button, .{ .label = "B" }),
+    },
+});
+// `row` is a plain BoxLayout{ .direction = .horizontal, .spacing = 12 }
+// The children tuple is discarded — use BoxLayout.compute() to lay them out.
+```
+
+### Tag → type reference
+
+| Tag          | Returned type |
+|--------------|---------------|
+| `.button`    | `Button`      |
+| `.label`     | `Label`       |
+| `.text_field`| `TextField`   |
+| `.checkbox`  | `Checkbox`    |
+| `.list_view` | `ListView`    |
+| `.hbox`      | `BoxLayout` (`.direction = .horizontal`) |
+| `.vbox`      | `BoxLayout` (`.direction = .vertical`)   |
+
+### Required fields
+
+Some widget types have fields with no default value that must be supplied in
+`opts`:
+
+| Tag          | Required opts field |
+|--------------|---------------------|
+| `.button`    | `.label: []const u8` |
+| `.label`     | `.text: []const u8`  |
+| `.list_view` | `.items: []const []const u8` |
+
+Omitting a required field produces a compile-time error ("use of undefined value
+here causes undefined behavior" or a missing-field initializer error).
+
+---
+
 ## File layout quick reference
 
 ```
@@ -1094,6 +1190,7 @@ src/
     animation.zig       ← Tween (legacy exponential decay)
     animator.zig        ← Animated, AnimatedColor, Easing (spring/ease)
     focus.zig           ← FocusManager
+    builder.zig         ← ui() declarative widget-tree DSL
   widgets/
     button.zig
     label.zig
