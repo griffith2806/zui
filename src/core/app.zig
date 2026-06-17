@@ -4,12 +4,43 @@ const build_options = @import("build_options");
 const event_mod    = @import("../events/event.zig");
 const node_mod     = @import("../accessibility/node.zig");
 
-extern "kernel32" fn GetTickCount64() callconv(std.builtin.CallingConvention.winapi) u64;
-extern "kernel32" fn Sleep(dwMs: u32) callconv(std.builtin.CallingConvention.winapi) void;
+// ── Platform-specific timing / sleep ────────────────────────────────────────
+// Windows declarations live in a comptime-selected struct so the kernel32
+// symbols are never emitted for non-Windows link targets.
+
+const win32_timing = if (builtin.os.tag == .windows) struct {
+    extern "kernel32" fn GetTickCount64() callconv(std.builtin.CallingConvention.winapi) u64;
+    extern "kernel32" fn Sleep(dwMs: u32) callconv(std.builtin.CallingConvention.winapi) void;
+} else void;
+
+fn getTickMs() i64 {
+    if (comptime builtin.os.tag == .windows) {
+        return @intCast(win32_timing.GetTickCount64());
+    } else {
+        // POSIX (macOS / Linux): clock_gettime(CLOCK_MONOTONIC).
+        var ts: std.c.timespec = undefined;
+        _ = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+        return @as(i64, ts.sec) * 1000 + @divTrunc(ts.nsec, 1_000_000);
+    }
+}
+
+fn sleepMs(ms: u32) void {
+    if (comptime builtin.os.tag == .windows) {
+        win32_timing.Sleep(ms);
+    } else {
+        // POSIX: nanosleep.
+        const req = std.c.timespec{
+            .sec  = @intCast(ms / 1000),
+            .nsec = @intCast((ms % 1000) * std.time.ns_per_ms),
+        };
+        _ = std.c.nanosleep(&req, null);
+    }
+}
 
 const Window = switch (builtin.os.tag) {
     .windows => @import("../platform/win32/window.zig").Window,
     .linux   => @import("../platform/x11/window.zig").Window,
+    .macos   => @import("../platform/cocoa/window.zig").Window,
     else     => @compileError("unsupported platform"),
 };
 
@@ -65,7 +96,7 @@ pub const Application = struct {
 
     /// Returns seconds elapsed since the previous call (capped at 0.1 s).
     pub fn deltaSeconds(self: *Application) f32 {
-        const now: i64 = @intCast(GetTickCount64());
+        const now: i64 = getTickMs();
         const dt: f32 = if (self.last_tick_ms == 0) 0.016
                         else @as(f32, @floatFromInt(now - self.last_tick_ms)) / 1000.0;
         self.last_tick_ms = now;
@@ -129,10 +160,10 @@ pub const Application = struct {
     pub fn capFps(self: *const Application, target_fps: u32) void {
         if (target_fps == 0) return;
         const target_ms: i64 = @intCast(1000 / target_fps);
-        const now: i64 = @intCast(GetTickCount64());
+        const now: i64 = getTickMs();
         const elapsed = now - self.last_tick_ms;
         if (elapsed < target_ms) {
-            Sleep(@intCast(target_ms - elapsed));
+            sleepMs(@intCast(target_ms - elapsed));
         }
     }
 };

@@ -1,6 +1,6 @@
 # Platform Progress
 
-## Status: Win32 Complete; X11 M19 Implementation Written (untested on Linux)
+## Status: Win32 Complete; X11 M19 Implementation Written (untested on Linux); Cocoa Skeleton Added
 
 ### Done
 - Win32 platform backend (`src/platform/win32/window.zig`) — fully working
@@ -26,6 +26,13 @@ _(nothing)_
 ### Blocked
 _(nothing — implementation complete, needs Linux runtime validation)_
 
+- Cocoa backend skeleton (`src/platform/cocoa/`) — all methods stubbed with `@panic`
+  - window.zig, event_loop.zig, platform.zig created
+  - `.macos` branch added to Window comptime switch in app.zig
+  - build.zig links Cocoa + Foundation + CoreGraphics frameworks for macOS targets
+  - app.zig kernel32 timing calls extracted to platform-agnostic helpers (getTickMs / sleepMs)
+  - See progress/cocoa_backend.md for implementation roadmap
+
 ### Up Next
 - Validate X11 backend on a Linux machine or CI runner
-- Cocoa backend (macOS) — not started
+- Implement Cocoa backend (see progress/cocoa_backend.md)
