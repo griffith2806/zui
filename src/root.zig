@@ -70,3 +70,11 @@ pub const Tooltip     = @import("widgets/tooltip.zig").Tooltip;
 pub const Dialog      = @import("widgets/dialog.zig").Dialog;
 pub const MenuItem    = @import("widgets/menu.zig").MenuItem;
 pub const Menu        = @import("widgets/menu.zig").Menu;
+
+// File dialogs
+const file_dialog_mod  = @import("platform/file_dialog.zig");
+pub const FileFilter      = file_dialog_mod.FileFilter;
+pub const FileDialogOptions = file_dialog_mod.FileDialogOptions;
+pub const openFile    = file_dialog_mod.openFile;
+pub const saveFile    = file_dialog_mod.saveFile;
+pub const openFolder  = file_dialog_mod.openFolder;
