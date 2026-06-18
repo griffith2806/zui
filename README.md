@@ -74,7 +74,7 @@ Or from a URL once published:
 
 ```zig
 .zui = .{
-    .url  = "https://github.com/yourname/zui/archive/<commit>.tar.gz",
+    .url  = "https://github.com/griffith2806/zui/archive/<commit>.tar.gz",
     .hash = "...",
 },
 ```

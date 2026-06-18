@@ -170,12 +170,14 @@ fn runDialog(
     opts:  FileDialogOptions,
 ) !?[]u8 {
     // ── 1. CoInitializeEx ────────────────────────────────────────────────────
-    // S_OK (0)  = first init on this thread.
-    // S_FALSE (1) = already initialised on this thread; still call CoUninitialize.
-    // Negative = error.
+    // S_OK (0)      = first init on this thread.
+    // S_FALSE (1)   = already initialised on this thread; still call CoUninitialize.
+    // RPC_E_CHANGED_MODE = COM already init'd with a different model; don't uninitialize.
+    const RPC_E_CHANGED_MODE: HRESULT = @bitCast(@as(u32, 0x80010106));
     const co_hr = CoInitializeEx(null, COINIT_APARTMENTTHREADED);
-    if (co_hr < 0) return error.CoInitFailed;
-    defer CoUninitialize();
+    if (co_hr < 0 and co_hr != RPC_E_CHANGED_MODE) return error.CoInitFailed;
+    const owns_co = co_hr >= 0;
+    defer if (owns_co) CoUninitialize();
 
     // ── 2. CoCreateInstance ──────────────────────────────────────────────────
     const clsid: *const GUID = switch (kind) {

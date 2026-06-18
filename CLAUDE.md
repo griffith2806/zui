@@ -90,6 +90,20 @@ Rules:
 - **Signal/slot** — typed, comptime-verified connections, no string-based lookup.
 - **Cross-platform** — platform backends live in `src/platform/`; a single `Platform` interface is the only thing widgets ever see.
 
+## Widget Gallery — Required
+
+**Every new widget added to `src/widgets/` must be demonstrated in the Component Gallery (`src/main.zig`).**
+
+Rules:
+- Add a new `Page` enum variant (or reuse an existing page if closely related).
+- Add a `NAV_ITEMS` entry so the page appears in the sidebar.
+- Add a page state struct with the widget instance(s) before the main loop.
+- Wire `handleEvent`, `update`, and `draw` in the main switch arms.
+- Add `accessNode` entries in `buildAccessibilityTree` for every interactive element.
+- Add a `test_<page>(win, r)` function in `tests/uia_test.py` and call it from `main()`.
+
+A widget that exists in `src/widgets/` but has no gallery page is **incomplete**.
+
 ## Coding Conventions
 
 - Zig 0.16 idioms; `std.debug.assert` for invariants, not error returns.
