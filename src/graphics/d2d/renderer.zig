@@ -638,6 +638,238 @@ const SEGOE_UI_VAR = std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI Variable")
 const LOCALE_EN_US = std.unicode.utf8ToUtf16LeStringLiteral("en-us");
 const LOCALE_EMPTY = std.unicode.utf8ToUtf16LeStringLiteral("");
 
+// ── D3D11 VideoProcessor (GPU NV12→BGRA + scale) bindings ─────────────────────
+// drawNv12 converts a decoded NV12 ID3D11Texture2D to BGRA on the GPU via
+// ID3D11VideoContext.VideoProcessorBlt, then the BGRA result draws through the
+// existing CreateBitmapFromDxgiSurface/DrawBitmap path. Only the handful of
+// methods we call are bound; vtbl gaps are padded with exact slot counts.
+
+const DXGI_FORMAT_NV12: u32 = 103;
+const D3D11_BIND_RENDER_TARGET: u32 = 0x20;
+const D3D11_BIND_SHADER_RESOURCE: u32 = 0x8;
+const D3D11_USAGE_DEFAULT: u32 = 0;
+const D3D11_VPIV_DIMENSION_TEXTURE2D: u32 = 1;
+const D3D11_VPOV_DIMENSION_TEXTURE2D: u32 = 1;
+const D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE: u32 = 0;
+// D3D11_VIDEO_USAGE_PLAYBACK_NORMAL = 0
+// Colorspace bitfields packed into a u32 (D3D11_VIDEO_PROCESSOR_COLOR_SPACE):
+//   bit0 Usage, bit1 RGB_Range, bits2-3 YCbCr_Matrix(=1 BT.709 / 0 BT.601),
+//   bit4 YCbCr_XvYCC, bits5-6 Nominal_Range. We use BT.601 limited (Matrix=0).
+
+const D3D11_SUBRESOURCE_DATA = extern struct {
+    pSysMem: *const anyopaque,
+    SysMemPitch: u32,
+    SysMemSlicePitch: u32,
+};
+
+const D3D11_TEXTURE2D_DESC = extern struct {
+    Width: u32,
+    Height: u32,
+    MipLevels: u32,
+    ArraySize: u32,
+    Format: u32,
+    SampleDesc: DXGI_SAMPLE_DESC,
+    Usage: u32,
+    BindFlags: u32,
+    CPUAccessFlags: u32,
+    MiscFlags: u32,
+};
+
+const D3D11_VIDEO_PROCESSOR_CONTENT_DESC = extern struct {
+    InputFrameFormat: u32,
+    InputFrameRate: DXGI_RATIONAL,
+    InputWidth: u32,
+    InputHeight: u32,
+    OutputFrameRate: DXGI_RATIONAL,
+    OutputWidth: u32,
+    OutputHeight: u32,
+    Usage: u32,
+};
+
+const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC = extern struct {
+    ViewDimension: u32,
+    MipSlice: u32, // union { Texture2D{MipSlice}, ... } — Texture2D is one u32
+};
+
+const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC = extern struct {
+    FourCC: u32,
+    ViewDimension: u32,
+    // union: Texture2D { MipSlice: u32, ArraySlice: u32 }
+    MipSlice: u32,
+    ArraySlice: u32,
+};
+
+const D3D11_VIDEO_PROCESSOR_STREAM = extern struct {
+    Enable: BOOL,
+    OutputIndex: u32,
+    InputFrameOrField: u32,
+    PastFrames: u32,
+    FutureFrames: u32,
+    ppPastSurfaces: ?*anyopaque,
+    pInputSurface: ?*anyopaque, // ID3D11VideoProcessorInputView*
+    ppFutureSurfaces: ?*anyopaque,
+    ppPastSurfacesRight: ?*anyopaque,
+    pInputSurfaceRight: ?*anyopaque,
+    ppFutureSurfacesRight: ?*anyopaque,
+};
+
+const D3D11_VIDEO_PROCESSOR_COLOR_SPACE = extern struct {
+    bits: u32, // packed bitfield (see note above)
+};
+
+// {1788DE07-..} not needed; QI uses the canonical IIDs below.
+// {B1C7706B-..}? use the published IIDs:
+const IID_ID3D11VideoDevice = GUID{ .Data1 = 0x10EC4D5B, .Data2 = 0x975A, .Data3 = 0x4689, .Data4 = .{ 0xB9, 0xE4, 0xD0, 0xAA, 0xC3, 0x0F, 0xE3, 0x33 } };
+const IID_ID3D11VideoContext = GUID{ .Data1 = 0x61F21C45, .Data2 = 0x3C0E, .Data3 = 0x4a74, .Data4 = .{ 0x9C, 0xEA, 0x67, 0x10, 0x0D, 0x9A, 0xD5, 0xE4 } };
+
+// ID3D11Device — we only need CreateTexture2D (slot 5).
+const ID3D11DeviceVtbl = extern struct {
+    _pad_0_4: [5]*const anyopaque, // IUnknown(3) + CreateBuffer(3) + ... up to 4
+    CreateTexture2D: *const fn (*anyopaque, *const D3D11_TEXTURE2D_DESC, ?*const anyopaque, *?*anyopaque) callconv(winapi) HRESULT, // 5
+};
+const ID3D11DeviceFace = extern struct { vtbl: *const ID3D11DeviceVtbl };
+
+// ID3D11VideoDevice : IUnknown. CreateVideoProcessor(4), CreateVideoProcessorInputView(8),
+// CreateVideoProcessorOutputView(9), CreateVideoProcessorEnumerator(10).
+const ID3D11VideoDeviceVtbl = extern struct {
+    _pad_0_2: [3]*const anyopaque, // IUnknown
+    _slot3: *const anyopaque, // CreateVideoDecoder
+    CreateVideoProcessor: *const fn (*anyopaque, *anyopaque, u32, *?*anyopaque) callconv(winapi) HRESULT, // 4
+    _slot5_7: [3]*const anyopaque, // CreateAuthenticatedChannel, CreateCryptoSession, CreateVideoDecoderOutputView
+    CreateVideoProcessorInputView: *const fn (*anyopaque, *anyopaque, *anyopaque, *const D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC, *?*anyopaque) callconv(winapi) HRESULT, // 8
+    CreateVideoProcessorOutputView: *const fn (*anyopaque, *anyopaque, *anyopaque, *const D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC, *?*anyopaque) callconv(winapi) HRESULT, // 9
+    CreateVideoProcessorEnumerator: *const fn (*anyopaque, *const D3D11_VIDEO_PROCESSOR_CONTENT_DESC, *?*anyopaque) callconv(winapi) HRESULT, // 10
+};
+const ID3D11VideoDeviceFace = extern struct { vtbl: *const ID3D11VideoDeviceVtbl };
+
+// ID3D11VideoContext : ID3D11DeviceChild. VideoProcessorSetOutputColorSpace(15),
+// VideoProcessorSetStreamColorSpace(28), VideoProcessorBlt(53).
+const ID3D11VideoContextVtbl = extern struct {
+    _pad_0_14: [15]*const anyopaque, // IUnknown(3)+DeviceChild(4)+VideoContext 7..14
+    VideoProcessorSetOutputColorSpace: *const fn (*anyopaque, *anyopaque, *const D3D11_VIDEO_PROCESSOR_COLOR_SPACE) callconv(winapi) void, // 15
+    _pad_16_27: [12]*const anyopaque, // 16..27
+    VideoProcessorSetStreamColorSpace: *const fn (*anyopaque, *anyopaque, u32, *const D3D11_VIDEO_PROCESSOR_COLOR_SPACE) callconv(winapi) void, // 28
+    _pad_29_52: [24]*const anyopaque, // 29..52
+    VideoProcessorBlt: *const fn (*anyopaque, *anyopaque, *anyopaque, u32, u32, *const D3D11_VIDEO_PROCESSOR_STREAM) callconv(winapi) HRESULT, // 53
+};
+const ID3D11VideoContextFace = extern struct { vtbl: *const ID3D11VideoContextVtbl };
+
+// Lazily-created VideoProcessor pipeline, cached on the renderer once sizes are known.
+const VideoNv12 = struct {
+    video_device: *ID3D11VideoDeviceFace,
+    video_ctx: *ID3D11VideoContextFace,
+    enumerator: *anyopaque,
+    processor: *anyopaque,
+    out_tex: *anyopaque, // ID3D11Texture2D (BGRA)
+    out_view: *anyopaque, // ID3D11VideoProcessorOutputView
+    out_bitmap: *anyopaque, // ID2D1Bitmap1 wrapping out_tex (for DrawBitmap)
+    src_w: u32,
+    src_h: u32,
+    out_w: u32,
+    out_h: u32,
+};
+
+/// Build the GPU NV12→BGRA pipeline for a given source size. The output texture is
+/// at source resolution (D2D scales it on draw). Returns error on any failure so the
+/// caller can fall back to the CPU path.
+fn buildVp(d3d_device: *anyopaque, d3d_ctx: *anyopaque, dc_ctx: *ID2D1DeviceContextFace, src_w: u32, src_h: u32) !VideoNv12 {
+    var vdev_raw: ?*anyopaque = null;
+    {
+        const u: *IUnknownFace = @ptrCast(@alignCast(d3d_device));
+        if (u.vtbl.QueryInterface(@ptrCast(u), &IID_ID3D11VideoDevice, &vdev_raw) != S_OK or vdev_raw == null) return error.VideoDeviceQi;
+    }
+    const video_device: *ID3D11VideoDeviceFace = @ptrCast(@alignCast(vdev_raw.?));
+    errdefer relCom(@ptrCast(video_device));
+
+    var vctx_raw: ?*anyopaque = null;
+    {
+        const u: *IUnknownFace = @ptrCast(@alignCast(d3d_ctx));
+        if (u.vtbl.QueryInterface(@ptrCast(u), &IID_ID3D11VideoContext, &vctx_raw) != S_OK or vctx_raw == null) return error.VideoContextQi;
+    }
+    const video_ctx: *ID3D11VideoContextFace = @ptrCast(@alignCast(vctx_raw.?));
+    errdefer relCom(@ptrCast(video_ctx));
+
+    const cdesc = D3D11_VIDEO_PROCESSOR_CONTENT_DESC{
+        .InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
+        .InputFrameRate = .{ .Numerator = 60, .Denominator = 1 },
+        .InputWidth = src_w,
+        .InputHeight = src_h,
+        .OutputFrameRate = .{ .Numerator = 60, .Denominator = 1 },
+        .OutputWidth = src_w,
+        .OutputHeight = src_h,
+        .Usage = 0, // D3D11_VIDEO_USAGE_PLAYBACK_NORMAL
+    };
+    var enum_raw: ?*anyopaque = null;
+    if (video_device.vtbl.CreateVideoProcessorEnumerator(@ptrCast(video_device), &cdesc, &enum_raw) != S_OK or enum_raw == null) return error.VpEnum;
+    const enumerator = enum_raw.?;
+    errdefer relCom(enumerator);
+
+    var proc_raw: ?*anyopaque = null;
+    if (video_device.vtbl.CreateVideoProcessor(@ptrCast(video_device), enumerator, 0, &proc_raw) != S_OK or proc_raw == null) return error.VpProc;
+    const processor = proc_raw.?;
+    errdefer relCom(processor);
+
+    const tdesc = D3D11_TEXTURE2D_DESC{
+        .Width = src_w,
+        .Height = src_h,
+        .MipLevels = 1,
+        .ArraySize = 1,
+        .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
+        .SampleDesc = .{ .Count = 1, .Quality = 0 },
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
+        .CPUAccessFlags = 0,
+        .MiscFlags = 0,
+    };
+    var tex_raw: ?*anyopaque = null;
+    {
+        const dev: *ID3D11DeviceFace = @ptrCast(@alignCast(d3d_device));
+        if (dev.vtbl.CreateTexture2D(@ptrCast(dev), &tdesc, null, &tex_raw) != S_OK or tex_raw == null) return error.VpTex;
+    }
+    const out_tex = tex_raw.?;
+    errdefer relCom(out_tex);
+
+    const ovd = D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC{ .ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2D, .MipSlice = 0 };
+    var ov_raw: ?*anyopaque = null;
+    if (video_device.vtbl.CreateVideoProcessorOutputView(@ptrCast(video_device), out_tex, enumerator, &ovd, &ov_raw) != S_OK or ov_raw == null) return error.VpOutView;
+    const out_view = ov_raw.?;
+    errdefer relCom(out_view);
+
+    // Wrap the BGRA output texture as a D2D bitmap so DrawBitmap can scale it.
+    var surf_raw: ?*anyopaque = null;
+    {
+        const u: *IUnknownFace = @ptrCast(@alignCast(out_tex));
+        if (u.vtbl.QueryInterface(@ptrCast(u), &IID_IDXGISurface, &surf_raw) != S_OK or surf_raw == null) return error.VpSurf;
+    }
+    const surf = surf_raw.?;
+    defer relCom(surf);
+    const bprops = D2D1_BITMAP_PROPERTIES1{
+        .pixelFormat = .{ .format = DXGI_FORMAT_B8G8R8A8_UNORM, .alphaMode = D2D1_ALPHA_MODE_IGNORE },
+        .dpiX = 96.0,
+        .dpiY = 96.0,
+        .bitmapOptions = 0, // normal drawable bitmap
+        .colorContext = null,
+    };
+    var bmp_raw: ?*anyopaque = null;
+    if (dc_ctx.vtbl.CreateBitmapFromDxgiSurface(@ptrCast(dc_ctx), surf, &bprops, &bmp_raw) != S_OK or bmp_raw == null) return error.VpBitmap;
+    const out_bitmap = bmp_raw.?;
+    errdefer relCom(out_bitmap);
+
+    return VideoNv12{
+        .video_device = video_device,
+        .video_ctx = video_ctx,
+        .enumerator = enumerator,
+        .processor = processor,
+        .out_tex = out_tex,
+        .out_view = out_view,
+        .out_bitmap = out_bitmap,
+        .src_w = src_w,
+        .src_h = src_h,
+        .out_w = src_w,
+        .out_h = src_h,
+    };
+}
+
 // ── Renderer ──────────────────────────────────────────────────────────────────
 
 pub const Renderer = struct {
@@ -650,7 +882,9 @@ pub const Renderer = struct {
     d2d_device:     *ID2D1DeviceFace,
     swapchain:      *IDXGISwapChainFace,
     d3d_device:     *anyopaque,        // ID3D11Device — shared with the decoder (Phase 3)
+    d3d_ctx:        *anyopaque,        // ID3D11DeviceContext (immediate) — VideoProcessorBlt
     target_bitmap:  ?*anyopaque,        // swapchain backbuffer bound as the D2D target
+    vp:             ?VideoNv12 = null,  // lazily-created GPU NV12→BGRA pipeline
     brush:          *ID2D1SolidColorBrushFace,
     dwrite:         ?*IDWriteFactoryFace, // null if DirectWrite is unavailable (text disabled)
     text_formats:   [NUM_FONT_SCALES]?*IDWriteTextFormatFace,
@@ -700,7 +934,8 @@ pub const Renderer = struct {
             return error.D3D11CreateFailed;
         const d3d_device = device_raw.?;
         errdefer relCom(d3d_device);
-        if (ctx_raw) |c| relCom(c); // immediate D3D context is unused by the D2D path
+        const d3d_ctx = ctx_raw orelse return error.D3D11CreateFailed; // kept for the VideoProcessor (NV12 path)
+        errdefer relCom(d3d_ctx);
         const swapchain: *IDXGISwapChainFace = @ptrCast(@alignCast(swapchain_raw.?));
         errdefer relCom(@ptrCast(swapchain));
 
@@ -779,6 +1014,7 @@ pub const Renderer = struct {
             .d2d_device = d2d_device,
             .swapchain = swapchain,
             .d3d_device = d3d_device,
+            .d3d_ctx = d3d_ctx,
             .target_bitmap = target,
             .brush = brush,
             .dwrite = dwrite,
@@ -814,11 +1050,13 @@ pub const Renderer = struct {
         // Unbind + release the swapchain target, then the device context (which is
         // the same COM object as render_target — release once), device, swapchain,
         // and finally the D3D11 device.
+        self.destroyVp();
         self.device_context.vtbl.SetTarget(@ptrCast(self.device_context), null);
         if (self.target_bitmap) |b| { relCom(b); self.target_bitmap = null; }
         _ = self.render_target.vtbl.Release(@ptrCast(self.render_target));
         relCom(@ptrCast(self.d2d_device));
         relCom(@ptrCast(self.swapchain));
+        relCom(self.d3d_ctx);
         relCom(self.d3d_device);
     }
 
@@ -1106,6 +1344,102 @@ pub const Renderer = struct {
             D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
             null,
         );
+    }
+
+    // ── GPU NV12 video draw ────────────────────────────────────────────────────
+
+    /// Draw a decoded NV12 ID3D11Texture2D (which MUST be on this renderer's D3D11
+    /// device — see d3dDevice()) into `dst`, GPU-converting NV12→BGRA via the
+    /// VideoProcessor and scaling with D2D. Returns false if the GPU path is
+    /// unavailable, so the caller can fall back to the CPU drawImageRaw path.
+    pub fn drawNv12(self: *Renderer, nv12_tex: *anyopaque, src_w: u32, src_h: u32, dst: Rect) bool {
+        if (!self.begin_draw_called or src_w == 0 or src_h == 0) return false;
+        const vp = self.ensureVp(src_w, src_h) orelse return false;
+
+        const ivd = D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC{
+            .FourCC = 0,
+            .ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D,
+            .MipSlice = 0,
+            .ArraySlice = 0,
+        };
+        var iv_raw: ?*anyopaque = null;
+        if (vp.video_device.vtbl.CreateVideoProcessorInputView(@ptrCast(vp.video_device), nv12_tex, vp.enumerator, &ivd, &iv_raw) != S_OK or iv_raw == null)
+            return false;
+        const input_view = iv_raw.?;
+        defer relCom(input_view);
+
+        // NV12 input is BT.601 limited (16-235); RGB output full range.
+        const cs_in = D3D11_VIDEO_PROCESSOR_COLOR_SPACE{ .bits = 0x10 };
+        const cs_out = D3D11_VIDEO_PROCESSOR_COLOR_SPACE{ .bits = 0x00 };
+        vp.video_ctx.vtbl.VideoProcessorSetStreamColorSpace(@ptrCast(vp.video_ctx), vp.processor, 0, &cs_in);
+        vp.video_ctx.vtbl.VideoProcessorSetOutputColorSpace(@ptrCast(vp.video_ctx), vp.processor, &cs_out);
+
+        var stream = std.mem.zeroes(D3D11_VIDEO_PROCESSOR_STREAM);
+        stream.Enable = 1;
+        stream.pInputSurface = input_view;
+        if (vp.video_ctx.vtbl.VideoProcessorBlt(@ptrCast(vp.video_ctx), vp.processor, vp.out_view, 0, 1, &stream) != S_OK)
+            return false;
+
+        const dst_rect = D2D1_RECT_F{
+            .left = toDip(dst.x),
+            .top = toDip(dst.y),
+            .right = toDip(dst.right()),
+            .bottom = toDip(dst.bottom()),
+        };
+        self.render_target.vtbl.DrawBitmap(@ptrCast(self.render_target), @ptrCast(vp.out_bitmap), &dst_rect, 1.0, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, null);
+        return true;
+    }
+
+    /// Smoke test: build an NV12 texture on this device, run it through the
+    /// VideoProcessor, and draw. Returns true if the whole GPU pipeline succeeded
+    /// (verifies the hand-bound VideoProcessor vtbl slots are correct). Must be
+    /// called inside a frame (after clear()).
+    pub fn nv12SelfTest(self: *Renderer) bool {
+        const W: u32 = 64;
+        const H: u32 = 64;
+        var buf: [W * H + W * H / 2]u8 = undefined;
+        @memset(buf[0 .. W * H], 150); // Y
+        @memset(buf[W * H ..], 128); // UV (neutral)
+        const sub = D3D11_SUBRESOURCE_DATA{ .pSysMem = &buf, .SysMemPitch = W, .SysMemSlicePitch = W * H };
+        const tdesc = D3D11_TEXTURE2D_DESC{
+            .Width = W,
+            .Height = H,
+            .MipLevels = 1,
+            .ArraySize = 1,
+            .Format = DXGI_FORMAT_NV12,
+            .SampleDesc = .{ .Count = 1, .Quality = 0 },
+            .Usage = D3D11_USAGE_DEFAULT,
+            .BindFlags = 0, // VideoProcessor input — no SRV/RTV bind needed
+            .CPUAccessFlags = 0,
+            .MiscFlags = 0,
+        };
+        var tex_raw: ?*anyopaque = null;
+        const dev: *ID3D11DeviceFace = @ptrCast(@alignCast(self.d3d_device));
+        if (dev.vtbl.CreateTexture2D(@ptrCast(dev), &tdesc, @ptrCast(&sub), &tex_raw) != S_OK or tex_raw == null) return false;
+        defer relCom(tex_raw.?);
+        return self.drawNv12(tex_raw.?, W, H, Rect.init(0, 0, W, H));
+    }
+
+    fn ensureVp(self: *Renderer, src_w: u32, src_h: u32) ?*VideoNv12 {
+        if (self.vp) |*v| {
+            if (v.src_w == src_w and v.src_h == src_h) return v;
+            self.destroyVp();
+        }
+        self.vp = buildVp(self.d3d_device, self.d3d_ctx, self.device_context, src_w, src_h) catch return null;
+        return &(self.vp.?);
+    }
+
+    fn destroyVp(self: *Renderer) void {
+        if (self.vp) |v| {
+            relCom(v.out_bitmap);
+            relCom(v.out_view);
+            relCom(v.out_tex);
+            relCom(v.processor);
+            relCom(v.enumerator);
+            relCom(@ptrCast(v.video_ctx));
+            relCom(@ptrCast(v.video_device));
+            self.vp = null;
+        }
     }
 
     // ── Resize ────────────────────────────────────────────────────────────────
