@@ -1165,7 +1165,9 @@ pub fn main(init: std.process.Init) !void {
         }
 
         // ── Draw (only when dirty) ───────────────────────────────────────────
-        if (redraw_cnt > 0) {
+        // Skip drawing while minimized: Windows reports a 0×0 client area, which
+        // would underflow the unsigned width/height math in the page renderers.
+        if (redraw_cnt > 0 and W > 0 and H > 0) {
             redraw_cnt -= 1;
             app.renderer.clear(if (dark_mode) BG else zui.Color.rgb(240, 240, 245));
             drawSidebar(&app.renderer, page, &nav_rects, &nav_hover_t, dark_mode);
