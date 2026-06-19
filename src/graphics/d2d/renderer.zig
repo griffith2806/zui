@@ -494,6 +494,14 @@ extern "d2d1" fn D2D1CreateDevice(
 const D3D_DRIVER_TYPE_HARDWARE: u32 = 1;
 const D3D11_SDK_VERSION: u32 = 7;
 const D3D11_CREATE_DEVICE_BGRA_SUPPORT: u32 = 0x20;
+const D3D11_CREATE_DEVICE_VIDEO_SUPPORT: u32 = 0x800; // DXVA decode (shared-device decoder, Phase 3)
+// {9B7E4E00-342C-4106-A19F-4F2704F689F0} IID_ID3D11Multithread
+const IID_ID3D11Multithread = GUID{ .Data1 = 0x9B7E4E00, .Data2 = 0x342C, .Data3 = 0x4106, .Data4 = .{ 0xA1, 0x9F, 0x4F, 0x27, 0x04, 0xF6, 0x89, 0xF0 } };
+const ID3D11MultithreadVtbl = extern struct {
+    _pad_0_4: [5]*const anyopaque, // IUnknown(3) + Enter(3) + Leave(4)
+    SetMultithreadProtected: *const fn (*anyopaque, BOOL) callconv(winapi) BOOL, // 5
+};
+const ID3D11MultithreadFace = extern struct { vtbl: *const ID3D11MultithreadVtbl };
 const DXGI_USAGE_RENDER_TARGET_OUTPUT: u32 = 0x20;
 const DXGI_SWAP_EFFECT_DISCARD: u32 = 0;
 const DXGI_FORMAT_UNKNOWN: u32 = 0;
@@ -927,7 +935,7 @@ pub const Renderer = struct {
         var ctx_raw: ?*anyopaque = null;
         const hr_dev = D3D11CreateDeviceAndSwapChain(
             null, D3D_DRIVER_TYPE_HARDWARE, null,
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, null, 0, D3D11_SDK_VERSION,
             &scd, &swapchain_raw, &device_raw, null, &ctx_raw,
         );
         if (hr_dev != S_OK or device_raw == null or swapchain_raw == null)
@@ -936,6 +944,19 @@ pub const Renderer = struct {
         errdefer relCom(d3d_device);
         const d3d_ctx = ctx_raw orelse return error.D3D11CreateFailed; // kept for the VideoProcessor (NV12 path)
         errdefer relCom(d3d_ctx);
+        // The decoder will DXVA-decode on this device from the receive thread while
+        // the renderer presents on the main thread — serialize device access.
+        {
+            var mt_raw: ?*anyopaque = null;
+            const u: *IUnknownFace = @ptrCast(@alignCast(d3d_ctx));
+            if (u.vtbl.QueryInterface(@ptrCast(u), &IID_ID3D11Multithread, &mt_raw) == S_OK) {
+                if (mt_raw) |m| {
+                    const mt: *ID3D11MultithreadFace = @ptrCast(@alignCast(m));
+                    _ = mt.vtbl.SetMultithreadProtected(@ptrCast(mt), 1);
+                    relCom(m);
+                }
+            }
+        }
         const swapchain: *IDXGISwapChainFace = @ptrCast(@alignCast(swapchain_raw.?));
         errdefer relCom(@ptrCast(swapchain));
 
