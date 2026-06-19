@@ -51,6 +51,13 @@ const MINMAXINFO = extern struct {
     ptMaxTrackSize: POINT,
 };
 
+const MONITORINFO = extern struct {
+    cbSize:    DWORD,
+    rcMonitor: RECT,
+    rcWork:    RECT,
+    dwFlags:   DWORD,
+};
+
 const MSG = extern struct {
     hwnd:    ?HWND,
     message: UINT,
@@ -205,6 +212,18 @@ extern "user32" fn GetDpiForSystem() callconv(std.builtin.CallingConvention.wina
 extern "user32" fn GetDpiForWindow(hwnd: HWND) callconv(std.builtin.CallingConvention.winapi) UINT;
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 
+// Borderless-fullscreen support.
+extern "user32" fn GetWindowRect(hWnd: HWND, lpRect: *RECT) callconv(std.builtin.CallingConvention.winapi) BOOL;
+extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: ?HWND, X: INT, Y: INT, cx: INT, cy: INT, uFlags: UINT) callconv(std.builtin.CallingConvention.winapi) BOOL;
+extern "user32" fn MonitorFromWindow(hWnd: HWND, dwFlags: DWORD) callconv(std.builtin.CallingConvention.winapi) ?*anyopaque;
+extern "user32" fn GetMonitorInfoW(hMonitor: *anyopaque, lpmi: *MONITORINFO) callconv(std.builtin.CallingConvention.winapi) BOOL;
+const GWL_STYLE: INT = -16;
+const WS_POPUP_VISIBLE: isize = 0x90000000; // WS_POPUP | WS_VISIBLE
+const MONITOR_DEFAULTTONEAREST: DWORD = 2;
+const SWP_NOZORDER: UINT = 0x0004;
+const SWP_FRAMECHANGED: UINT = 0x0020;
+const SWP_SHOWWINDOW: UINT = 0x0040;
+
 extern "gdi32" fn CreateCompatibleDC(hdc: ?HDC) callconv(std.builtin.CallingConvention.winapi) ?HDC;
 extern "gdi32" fn CreateCompatibleBitmap(hdc: HDC, cx: INT, cy: INT) callconv(std.builtin.CallingConvention.winapi) ?HBITMAP;
 extern "gdi32" fn DeleteDC(hdc: HDC) callconv(std.builtin.CallingConvention.winapi) BOOL;
@@ -243,6 +262,11 @@ pub const Window = struct {
     size_changed: bool = false,
     uia_tree:     ?*uia_mod.UiaTree = null,
     drop_target:  ?*drop_mod.DropTarget = null,
+
+    // Borderless-fullscreen state: saved windowed style + rect to restore on exit.
+    is_fullscreen: bool = false,
+    saved_style:   isize = 0,
+    saved_rect:    RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 
     ev_buf:  [MAX_EVENTS]Event = undefined,
     ev_head: u32 = 0,
@@ -355,6 +379,30 @@ pub const Window = struct {
         win.drop_target = drop_mod.DropTarget.create(alloc, @ptrCast(hwnd), eq) catch null;
 
         return win;
+    }
+
+    /// Toggle borderless fullscreen. Going fullscreen saves the current style +
+    /// window rect, switches to a borderless popup covering the nearest monitor,
+    /// and lets the normal WM_SIZE path resize the DIB. Exiting restores both.
+    pub fn setFullscreen(self: *Window, on: bool) void {
+        if (on == self.is_fullscreen) return;
+        if (on) {
+            self.saved_style = GetWindowLongPtrW(self.hwnd, GWL_STYLE);
+            _ = GetWindowRect(self.hwnd, &self.saved_rect);
+            const mon = MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST) orelse return;
+            var mi: MONITORINFO = undefined;
+            mi.cbSize = @sizeOf(MONITORINFO);
+            if (GetMonitorInfoW(mon, &mi) == 0) return;
+            const r = mi.rcMonitor;
+            _ = SetWindowLongPtrW(self.hwnd, GWL_STYLE, WS_POPUP_VISIBLE);
+            _ = SetWindowPos(self.hwnd, null, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_SHOWWINDOW);
+            self.is_fullscreen = true;
+        } else {
+            const r = self.saved_rect;
+            _ = SetWindowLongPtrW(self.hwnd, GWL_STYLE, self.saved_style);
+            _ = SetWindowPos(self.hwnd, null, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_FRAMECHANGED | SWP_NOZORDER | SWP_SHOWWINDOW);
+            self.is_fullscreen = false;
+        }
     }
 
     pub fn resizeDIB(self: *Window, new_w: u32, new_h: u32) void {
