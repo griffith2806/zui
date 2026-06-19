@@ -30,6 +30,10 @@ const TA_TOP:             UINT  = 0;
 const UINT = u32;
 
 const SEGOE_UI = std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI Variable");
+// Icon font. "Segoe MDL2 Assets" ships on Windows 10 (1709+) and 11 and carries
+// the standard symbol glyphs (cog = U+E713). Drawn through the same GDI/ClearType
+// path as text, so icons inherit crisp DPI-aware rendering for free.
+const SEGOE_ICONS = std.unicode.utf8ToUtf16LeStringLiteral("Segoe MDL2 Assets");
 
 extern "gdi32" fn CreateFontW(
     cHeight: INT, cWidth: INT, cEscapement: INT, cOrientation: INT,
@@ -76,6 +80,8 @@ const TextCmd = struct {
     y:     i32,
     color: Color,
     scale: u32,
+    /// true → render with the icon font (Segoe MDL2 Assets) instead of the UI font.
+    is_icon: bool = false,
     /// Active clip rect at queue time, in physical DC pixels.
     /// null means no clip was active — draw without restriction.
     clip:  ?GdiRect,
@@ -92,6 +98,7 @@ pub const Renderer = struct {
     // for font measurement (GetTextExtentPoint32W); text is drawn on the screen DC.
     gdi_dc:    ?HDC  = null,
     gdi_fonts: [NUM_FONT_SCALES]?HFONT = .{null} ** NUM_FONT_SCALES,
+    gdi_icon_fonts: [NUM_FONT_SCALES]?HFONT = .{null} ** NUM_FONT_SCALES,
     // Deferred text queue
     text_cmds:      [MAX_TEXT_CMDS]TextCmd = undefined,
     text_cmd_count: usize = 0,
@@ -120,6 +127,12 @@ pub const Renderer = struct {
                 -phys_px, 0, 0, 0, weight, 0, 0, 0,
                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                 CLEARTYPE_QUALITY, FF_SWISS, SEGOE_UI,
+            );
+            // Icon font at the same physical size, normal weight.
+            self.gdi_icon_fonts[i] = CreateFontW(
+                -phys_px, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, FF_SWISS, SEGOE_ICONS,
             );
         }
     }
@@ -227,7 +240,18 @@ pub const Renderer = struct {
         self.drawTextScale(text, x, y, color, scale);
     }
 
+    /// Draw an icon glyph from the icon font. `icon` is a UTF-8 string holding the
+    /// codepoint (e.g. zui.icons.settings). `scale` matches the text scale table, so
+    /// an icon lines up with same-scale text. Falls back to nothing without GDI.
+    pub fn drawIcon(self: *Renderer, icon: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
+        self.queueGlyphs(icon, x, y, color, scale, true);
+    }
+
     fn drawTextScale(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
+        self.queueGlyphs(text, x, y, color, scale, false);
+    }
+
+    fn queueGlyphs(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, scale: u32, is_icon: bool) void {
         if (self.gdi_dc != null) {
             // Quick rejection: if a clip is active and the text origin is clearly
             // below or to the right of the clip, skip this command.  We cannot
@@ -250,6 +274,7 @@ pub const Renderer = struct {
                 // Store physical coords so GDI places text at the correct pixel
                 .x = self.toPhysI(x), .y = self.toPhysI(y),
                 .color = color, .scale = scale,
+                .is_icon = is_icon,
                 // Capture clip as physical GdiRect for flushText
                 .clip = self.physClipGdi(),
             };
@@ -257,7 +282,9 @@ pub const Renderer = struct {
             self.text_wbuf_pos  += wlen;
             return;
         }
-        // Fallback: bitmap font (no GDI / non-Windows)
+        // Fallback: bitmap font (no GDI / non-Windows). Icons have no bitmap
+        // representation, so skip them rather than drawing garbage.
+        if (is_icon) return;
         if (scale <= 1) {
             self.drawBitmapText(text, x, y, color);
         } else {
@@ -281,7 +308,8 @@ pub const Renderer = struct {
         _ = SetTextAlign(dc, TA_LEFT | TA_TOP);
         for (self.text_cmds[0..self.text_cmd_count]) |cmd| {
             const idx = @min(cmd.scale, NUM_FONT_SCALES - 1);
-            if (self.gdi_fonts[idx]) |hf| {
+            const font = if (cmd.is_icon) self.gdi_icon_fonts[idx] else self.gdi_fonts[idx];
+            if (font) |hf| {
                 _ = SelectObject(dc, @ptrCast(hf));
                 const cr: DWORD = @as(DWORD, cmd.color.r) | (@as(DWORD, cmd.color.g) << 8) | (@as(DWORD, cmd.color.b) << 16);
                 _ = SetTextColor(dc, cr);
@@ -323,6 +351,24 @@ pub const Renderer = struct {
             }
         }
         return @intCast(text.len * bfont.GLYPH_W * scale);
+    }
+
+    /// Measure an icon glyph's width in LOGICAL pixels using the icon font.
+    pub fn iconWidthScaled(self: *const Renderer, icon: []const u8, scale: u32) u32 {
+        const idx = @min(scale, NUM_FONT_SCALES - 1);
+        if (self.gdi_dc) |dc| {
+            if (self.gdi_icon_fonts[idx]) |hf| {
+                _ = SelectObject(@constCast(dc), @ptrCast(@constCast(hf)));
+                var wbuf: [16]u16 = undefined;
+                const wlen = std.unicode.utf8ToUtf16Le(&wbuf, icon) catch return 0;
+                var sz: GdiSize = undefined;
+                _ = GetTextExtentPoint32W(@constCast(dc), wbuf[0..wlen].ptr, @intCast(wlen), &sz);
+                const phys: u32 = @intCast(@max(0, sz.cx));
+                if (self.dpi_scale <= 1.0) return phys;
+                return @intFromFloat(@ceil(@as(f32, @floatFromInt(phys)) / self.dpi_scale));
+            }
+        }
+        return @as(u32, @intCast(FONT_PX[idx])) * scale;
     }
 
     // ── Alpha blending ────────────────────────────────────────────────────────

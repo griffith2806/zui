@@ -57,6 +57,9 @@ pub const ui         = builder_mod.ui;
 // Graphics
 pub const Image = @import("graphics/image.zig").Image;
 
+// Icons (Segoe MDL2 Assets codepoints for Renderer.drawIcon)
+pub const icons = @import("style/icons.zig");
+
 // Widgets
 pub const Label       = @import("widgets/label.zig").Label;
 pub const Button      = @import("widgets/button.zig").Button;
