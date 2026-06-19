@@ -106,10 +106,13 @@ pub fn build(b: *std.Build) void {
         exe.root_module.linkSystemLibrary("ole32", .{});
         exe.root_module.linkSystemLibrary("shell32", .{});
     }
-    // Direct2D + DirectWrite backend.
+    // Direct2D + DirectWrite backend. d3d11 provides the device + swapchain that
+    // backs the D2D 1.1 device-context render path (D3D11CreateDeviceAndSwapChain).
     if (target.result.os.tag == .windows and backend == .d2d) {
         exe.root_module.linkSystemLibrary("d2d1", .{});
         exe.root_module.linkSystemLibrary("dwrite", .{});
+        exe.root_module.linkSystemLibrary("d3d11", .{});
+        exe.root_module.linkSystemLibrary("dxgi", .{});
     }
 
     b.installArtifact(exe);

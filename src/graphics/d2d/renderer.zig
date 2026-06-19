@@ -61,7 +61,7 @@ const IID_IDWriteFactory = GUID{
 // ── D2D / DWrite constants ────────────────────────────────────────────────────
 
 const D2D1_FACTORY_TYPE_SINGLE_THREADED: u32 = 0;
-const DWRITE_FACTORY_TYPE_SHARED: u32 = 1;
+const DWRITE_FACTORY_TYPE_SHARED: u32 = 0;
 
 const D2D1_ANTIALIAS_MODE_PER_PRIMITIVE: u32 = 0;
 const D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE: u32 = 1;
@@ -460,6 +460,167 @@ extern "dwrite" fn DWriteCreateFactory(
     factory:     **anyopaque,
 ) callconv(winapi) HRESULT;
 
+// ── D2D 1.1 device-context + DXGI swapchain path ──────────────────────────────
+// The legacy ID2D1HwndRenderTarget (above) can't host ID2D1Effect (needed for the
+// GPU NV12→RGB YCbCr effect), so we render through an ID2D1DeviceContext whose
+// target is a DXGI swapchain backbuffer. D3D11CreateDeviceAndSwapChain builds the
+// device + swapchain in one call (no DXGI factory walk); the device is exposed so
+// the H.264 decoder can DXVA-decode on it and hand its NV12 texture straight in.
+
+extern "user32" fn GetDpiForWindow(hwnd: *anyopaque) callconv(winapi) u32;
+
+extern "d3d11" fn D3D11CreateDeviceAndSwapChain(
+    pAdapter: ?*anyopaque,
+    DriverType: u32,
+    Software: ?*anyopaque,
+    Flags: u32,
+    pFeatureLevels: ?*const u32,
+    FeatureLevels: u32,
+    SDKVersion: u32,
+    pSwapChainDesc: *const DXGI_SWAP_CHAIN_DESC,
+    ppSwapChain: *?*anyopaque,
+    ppDevice: *?*anyopaque,
+    pFeatureLevel: ?*u32,
+    ppImmediateContext: *?*anyopaque,
+) callconv(winapi) HRESULT;
+
+extern "d2d1" fn D2D1CreateDevice(
+    dxgiDevice: *anyopaque,
+    creationProperties: ?*const anyopaque,
+    d2dDevice: *?*anyopaque,
+) callconv(winapi) HRESULT;
+
+
+const D3D_DRIVER_TYPE_HARDWARE: u32 = 1;
+const D3D11_SDK_VERSION: u32 = 7;
+const D3D11_CREATE_DEVICE_BGRA_SUPPORT: u32 = 0x20;
+const DXGI_USAGE_RENDER_TARGET_OUTPUT: u32 = 0x20;
+const DXGI_SWAP_EFFECT_DISCARD: u32 = 0;
+const DXGI_FORMAT_UNKNOWN: u32 = 0;
+const D2D1_BITMAP_OPTIONS_TARGET: u32 = 1;
+const D2D1_BITMAP_OPTIONS_CANNOT_DRAW: u32 = 2;
+const D2D1_DEVICE_CONTEXT_OPTIONS_NONE: u32 = 0;
+
+// {54ec77fa-1377-44e6-8c32-88fd5f44c84c} IID_IDXGIDevice
+const IID_IDXGIDevice = GUID{ .Data1 = 0x54ec77fa, .Data2 = 0x1377, .Data3 = 0x44e6, .Data4 = .{ 0x8c, 0x32, 0x88, 0xfd, 0x5f, 0x44, 0xc8, 0x4c } };
+// {cafcb56c-6ac3-4889-bf47-9e23bbd260ec} IID_IDXGISurface
+const IID_IDXGISurface = GUID{ .Data1 = 0xcafcb56c, .Data2 = 0x6ac3, .Data3 = 0x4889, .Data4 = .{ 0xbf, 0x47, 0x9e, 0x23, 0xbb, 0xd2, 0x60, 0xec } };
+
+const DXGI_RATIONAL = extern struct { Numerator: u32, Denominator: u32 };
+const DXGI_MODE_DESC = extern struct {
+    Width: u32,
+    Height: u32,
+    RefreshRate: DXGI_RATIONAL,
+    Format: u32,
+    ScanlineOrdering: u32,
+    Scaling: u32,
+};
+const DXGI_SAMPLE_DESC = extern struct { Count: u32, Quality: u32 };
+const DXGI_SWAP_CHAIN_DESC = extern struct {
+    BufferDesc: DXGI_MODE_DESC,
+    SampleDesc: DXGI_SAMPLE_DESC,
+    BufferUsage: u32,
+    BufferCount: u32,
+    OutputWindow: HWND,
+    Windowed: BOOL,
+    SwapEffect: u32,
+    Flags: u32,
+};
+const D2D1_BITMAP_PROPERTIES1 = extern struct {
+    pixelFormat: D2D1_PIXEL_FORMAT,
+    dpiX: FLOAT,
+    dpiY: FLOAT,
+    bitmapOptions: u32,
+    colorContext: ?*anyopaque,
+};
+
+// Generic IUnknown view for QueryInterface/Release on opaque COM pointers.
+const IUnknownVtbl = extern struct {
+    QueryInterface: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:        *const fn (*anyopaque) callconv(winapi) ULONG,
+};
+const IUnknownFace = extern struct { vtbl: *const IUnknownVtbl };
+
+// ID2D1Device : ID2D1Resource — we only need CreateDeviceContext (slot 4).
+const ID2D1DeviceVtbl = extern struct {
+    QueryInterface: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:        *const fn (*anyopaque) callconv(winapi) ULONG,
+    GetFactory:     *const fn (*anyopaque, *?*anyopaque) callconv(winapi) void,
+    CreateDeviceContext: *const fn (*anyopaque, u32, *?*anyopaque) callconv(winapi) HRESULT,
+};
+const ID2D1DeviceFace = extern struct { vtbl: *const ID2D1DeviceVtbl };
+
+// IDXGISwapChain : IDXGIDeviceSubObject : IDXGIObject.
+const IDXGISwapChainVtbl = extern struct {
+    // IUnknown 0-2
+    QueryInterface: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:        *const fn (*anyopaque) callconv(winapi) ULONG,
+    // IDXGIObject 3-6
+    SetPrivateData:          *const fn (*anyopaque, *const GUID, u32, *const anyopaque) callconv(winapi) HRESULT,
+    SetPrivateDataInterface: *const fn (*anyopaque, *const GUID, ?*const anyopaque) callconv(winapi) HRESULT,
+    GetPrivateData:          *const fn (*anyopaque, *const GUID, *u32, *anyopaque) callconv(winapi) HRESULT,
+    GetParent:               *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    // IDXGIDeviceSubObject 7
+    GetDevice: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    // IDXGISwapChain 8-14
+    Present:            *const fn (*anyopaque, u32, u32) callconv(winapi) HRESULT,
+    GetBuffer:          *const fn (*anyopaque, u32, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    SetFullscreenState: *const fn (*anyopaque, BOOL, ?*anyopaque) callconv(winapi) HRESULT,
+    GetFullscreenState: *const fn (*anyopaque, ?*BOOL, *?*anyopaque) callconv(winapi) HRESULT,
+    GetDesc:            *const fn (*anyopaque, *DXGI_SWAP_CHAIN_DESC) callconv(winapi) HRESULT,
+    ResizeBuffers:      *const fn (*anyopaque, u32, u32, u32, u32, u32) callconv(winapi) HRESULT,
+    // ResizeTarget … unused
+};
+const IDXGISwapChainFace = extern struct { vtbl: *const IDXGISwapChainVtbl };
+
+// ID2D1DeviceContext : ID2D1RenderTarget. Slots 0-57 are identical to
+// ID2D1RenderTarget, so the existing draw methods call through the
+// ID2D1HwndRenderTargetFace view; here we only bind the four 1.1 methods we use,
+// padding the gaps with the EXACT slot counts so their offsets are correct.
+const ID2D1DeviceContextVtbl = extern struct {
+    // IUnknown(3) + ID2D1Resource(1) + ID2D1RenderTarget(53) = slots 0..56, then the
+    // ID2D1DeviceContext methods start at 57. CreateBitmap(57), CreateBitmapFromWicBitmap(58),
+    // CreateColorContext*3 (59..61) → CreateBitmapFromDxgiSurface at 62.
+    _pad_0_61: [62]*const anyopaque, // slots 0..61
+    CreateBitmapFromDxgiSurface: *const fn (*anyopaque, *anyopaque, ?*const D2D1_BITMAP_PROPERTIES1, *?*anyopaque) callconv(winapi) HRESULT, // 62
+    CreateEffect:                *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT, // 63
+    _pad_64_73: [10]*const anyopaque, // 64..73
+    SetTarget: *const fn (*anyopaque, ?*anyopaque) callconv(winapi) void, // 74
+    _pad_75_82: [8]*const anyopaque, // 75..82
+    DrawImage: *const fn (*anyopaque, *anyopaque, ?*const D2D1_POINT_2F, ?*const D2D1_RECT_F, u32, u32) callconv(winapi) void, // 83
+};
+const ID2D1DeviceContextFace = extern struct { vtbl: *const ID2D1DeviceContextVtbl };
+
+fn relCom(p: *anyopaque) void {
+    const u: *IUnknownFace = @ptrCast(@alignCast(p));
+    _ = u.vtbl.Release(@ptrCast(u));
+}
+
+/// Bind the swapchain's backbuffer as the device context's render target.
+/// Returns the ID2D1Bitmap1 target (caller owns a ref). Used by init and resize.
+fn makeSwapchainTarget(swapchain: *IDXGISwapChainFace, dc: *ID2D1DeviceContextFace) !*anyopaque {
+    var surf_raw: ?*anyopaque = null;
+    if (swapchain.vtbl.GetBuffer(@ptrCast(swapchain), 0, &IID_IDXGISurface, &surf_raw) != S_OK or surf_raw == null)
+        return error.SwapchainGetBufferFailed;
+    const surf = surf_raw.?;
+    defer relCom(surf);
+    const props = D2D1_BITMAP_PROPERTIES1{
+        .pixelFormat = .{ .format = DXGI_FORMAT_B8G8R8A8_UNORM, .alphaMode = D2D1_ALPHA_MODE_IGNORE },
+        .dpiX = 96.0,
+        .dpiY = 96.0,
+        .bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        .colorContext = null,
+    };
+    var bmp_raw: ?*anyopaque = null;
+    if (dc.vtbl.CreateBitmapFromDxgiSurface(@ptrCast(dc), surf, &props, &bmp_raw) != S_OK or bmp_raw == null)
+        return error.CreateBitmapFromDxgiFailed;
+    dc.vtbl.SetTarget(@ptrCast(dc), bmp_raw.?);
+    return bmp_raw.?;
+}
+
 // ── Font size table ───────────────────────────────────────────────────────────
 // Matches software renderer exactly: indexed by scale (1..6).
 // Values are in points/DIPs (D2D uses DIPs = 1/96 inch by default).
@@ -480,138 +641,153 @@ const LOCALE_EMPTY = std.unicode.utf8ToUtf16LeStringLiteral("");
 // ── Renderer ──────────────────────────────────────────────────────────────────
 
 pub const Renderer = struct {
-    factory:       *ID2D1FactoryFace,
-    render_target: *ID2D1HwndRenderTargetFace,
-    brush:         *ID2D1SolidColorBrushFace,
-    dwrite:        *IDWriteFactoryFace,
-    text_formats:  [NUM_FONT_SCALES]?*IDWriteTextFormatFace,
-    dpi_scale:     f32,
-    width:         u32,
-    height:        u32,
+    // `render_target` and `device_context` are the SAME ID2D1DeviceContext COM
+    // object viewed through two vtbls: the RenderTarget view (slots 0-57) drives
+    // every existing draw method unchanged, the DeviceContext view exposes the 1.1
+    // methods (SetTarget / effects). Released once (via render_target).
+    render_target:  *ID2D1HwndRenderTargetFace,
+    device_context: *ID2D1DeviceContextFace,
+    d2d_device:     *ID2D1DeviceFace,
+    swapchain:      *IDXGISwapChainFace,
+    d3d_device:     *anyopaque,        // ID3D11Device — shared with the decoder (Phase 3)
+    target_bitmap:  ?*anyopaque,        // swapchain backbuffer bound as the D2D target
+    brush:          *ID2D1SolidColorBrushFace,
+    dwrite:         ?*IDWriteFactoryFace, // null if DirectWrite is unavailable (text disabled)
+    text_formats:   [NUM_FONT_SCALES]?*IDWriteTextFormatFace,
+    dpi_scale:      f32,
+    width:          u32,
+    height:         u32,
     begin_draw_called: bool,
-    clip_pushed:   bool,
+    clip_pushed:    bool,
+
+    /// The D3D11 device backing this renderer's swapchain. The H.264 decoder can
+    /// DXVA-decode on it so its NV12 texture is usable as a D2D effect input with
+    /// no cross-device copy. Returns an `*ID3D11Device` as an opaque pointer.
+    pub fn d3dDevice(self: *Renderer) *anyopaque {
+        return self.d3d_device;
+    }
 
     /// Initialize the D2D renderer for the given HWND.
     /// `hwnd` must be a valid HWND; `width` and `height` are in physical pixels.
     pub fn init(hwnd: *anyopaque, width: u32, height: u32) !Renderer {
-        // ── 1. Create ID2D1Factory ────────────────────────────────────────────
-        var factory_raw: *anyopaque = undefined;
-        const hr_fac = D2D1CreateFactory(
-            D2D1_FACTORY_TYPE_SINGLE_THREADED,
-            &IID_ID2D1Factory,
-            null,
-            &factory_raw,
-        );
-        if (hr_fac != S_OK) return error.D2DFactoryCreateFailed;
-        const factory: *ID2D1FactoryFace = @ptrCast(@alignCast(factory_raw));
-
-        // ── 2. Create HwndRenderTarget ────────────────────────────────────────
-        const rt_props = D2D1_RENDER_TARGET_PROPERTIES{
-            .type_       = 0, // D2D1_RENDER_TARGET_TYPE_DEFAULT
-            .pixelFormat = .{
-                .format    = DXGI_FORMAT_B8G8R8A8_UNORM,
-                .alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED,
+        // ── 1. D3D11 device + DXGI swapchain in one call ──────────────────────
+        const scd = DXGI_SWAP_CHAIN_DESC{
+            .BufferDesc = .{
+                .Width = width,
+                .Height = height,
+                .RefreshRate = .{ .Numerator = 0, .Denominator = 1 },
+                .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
+                .ScanlineOrdering = 0,
+                .Scaling = 0,
             },
-            .dpiX    = 0, // 0 = use system DPI
-            .dpiY    = 0,
-            .usage   = 0,
-            .minLevel = 0,
+            .SampleDesc = .{ .Count = 1, .Quality = 0 },
+            .BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
+            .BufferCount = 1,
+            .OutputWindow = @ptrCast(hwnd),
+            .Windowed = 1,
+            .SwapEffect = DXGI_SWAP_EFFECT_DISCARD,
+            .Flags = 0,
         };
-        const hwnd_rt_props = D2D1_HWND_RENDER_TARGET_PROPERTIES{
-            .hwnd       = @ptrCast(hwnd),
-            .pixelSize  = .{ .width = width, .height = height },
-            .presentOptions = 0,
-        };
-        var rt_raw: ?*anyopaque = null;
-        const hr_rt = factory.vtbl.CreateHwndRenderTarget(
-            @ptrCast(factory),
-            &rt_props,
-            &hwnd_rt_props,
-            &rt_raw,
+        var swapchain_raw: ?*anyopaque = null;
+        var device_raw: ?*anyopaque = null;
+        var ctx_raw: ?*anyopaque = null;
+        const hr_dev = D3D11CreateDeviceAndSwapChain(
+            null, D3D_DRIVER_TYPE_HARDWARE, null,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, D3D11_SDK_VERSION,
+            &scd, &swapchain_raw, &device_raw, null, &ctx_raw,
         );
-        if (hr_rt != S_OK or rt_raw == null) {
-            _ = factory.vtbl.Release(@ptrCast(factory));
-            return error.D2DRenderTargetCreateFailed;
+        if (hr_dev != S_OK or device_raw == null or swapchain_raw == null)
+            return error.D3D11CreateFailed;
+        const d3d_device = device_raw.?;
+        errdefer relCom(d3d_device);
+        if (ctx_raw) |c| relCom(c); // immediate D3D context is unused by the D2D path
+        const swapchain: *IDXGISwapChainFace = @ptrCast(@alignCast(swapchain_raw.?));
+        errdefer relCom(@ptrCast(swapchain));
+
+        // ── 2. D3D device → IDXGIDevice → D2D device → device context ─────────
+        var dxgi_dev_raw: ?*anyopaque = null;
+        {
+            const u: *IUnknownFace = @ptrCast(@alignCast(d3d_device));
+            if (u.vtbl.QueryInterface(@ptrCast(u), &IID_IDXGIDevice, &dxgi_dev_raw) != S_OK or dxgi_dev_raw == null)
+                return error.DxgiDeviceQiFailed;
         }
-        const rt: *ID2D1HwndRenderTargetFace = @ptrCast(@alignCast(rt_raw.?));
+        const dxgi_dev = dxgi_dev_raw.?;
+        defer relCom(dxgi_dev); // only needed to create the D2D device
 
-        // Set anti-alias mode
-        rt.vtbl.SetAntialiasMode(@ptrCast(rt), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        rt.vtbl.SetTextAntialiasMode(@ptrCast(rt), D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+        var d2d_dev_raw: ?*anyopaque = null;
+        if (D2D1CreateDevice(dxgi_dev, null, &d2d_dev_raw) != S_OK or d2d_dev_raw == null)
+            return error.D2DCreateDeviceFailed;
+        const d2d_device: *ID2D1DeviceFace = @ptrCast(@alignCast(d2d_dev_raw.?));
+        errdefer relCom(@ptrCast(d2d_device));
 
-        // ── 3. Create a reusable solid-color brush ────────────────────────────
+        var dc_raw: ?*anyopaque = null;
+        if (d2d_device.vtbl.CreateDeviceContext(@ptrCast(d2d_device), D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &dc_raw) != S_OK or dc_raw == null)
+            return error.D2DDeviceContextFailed;
+        const dc = dc_raw.?;
+        errdefer relCom(dc);
+        // Same COM object, two vtbl views (see the struct doc comment).
+        const dc_render: *ID2D1HwndRenderTargetFace = @ptrCast(@alignCast(dc));
+        const dc_ctx: *ID2D1DeviceContextFace = @ptrCast(@alignCast(dc));
+
+        // ── 3. Match the window DPI so logical coords scale to physical pixels ─
+        const dpi: f32 = blk: {
+            const d = GetDpiForWindow(hwnd);
+            break :blk if (d > 0) @floatFromInt(d) else 96.0;
+        };
+        dc_render.vtbl.SetDpi(@ptrCast(dc_render), dpi, dpi);
+
+        // ── 4. Bind the swapchain backbuffer as the render target ─────────────
+        const target = try makeSwapchainTarget(swapchain, dc_ctx);
+        errdefer relCom(target);
+
+        dc_render.vtbl.SetAntialiasMode(@ptrCast(dc_render), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        dc_render.vtbl.SetTextAntialiasMode(@ptrCast(dc_render), D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+
+        // ── 5. Reusable solid-color brush ─────────────────────────────────────
         const brush_color = D2D1_COLOR_F{ .r = 1.0, .g = 1.0, .b = 1.0, .a = 1.0 };
         var brush_raw: ?*anyopaque = null;
-        const hr_br = rt.vtbl.CreateSolidColorBrush(
-            @ptrCast(rt),
-            &brush_color,
-            null,
-            &brush_raw,
-        );
-        if (hr_br != S_OK or brush_raw == null) {
-            _ = rt.vtbl.Release(@ptrCast(rt));
-            _ = factory.vtbl.Release(@ptrCast(factory));
+        if (dc_render.vtbl.CreateSolidColorBrush(@ptrCast(dc_render), &brush_color, null, &brush_raw) != S_OK or brush_raw == null)
             return error.D2DBrushCreateFailed;
-        }
         const brush: *ID2D1SolidColorBrushFace = @ptrCast(@alignCast(brush_raw.?));
+        errdefer relCom(@ptrCast(brush));
 
-        // ── 4. Create IDWriteFactory ──────────────────────────────────────────
-        var dwrite_raw: *anyopaque = undefined;
-        const hr_dw = DWriteCreateFactory(
-            DWRITE_FACTORY_TYPE_SHARED,
-            &IID_IDWriteFactory,
-            &dwrite_raw,
-        );
-        if (hr_dw != S_OK) {
-            _ = brush.vtbl.Release(@ptrCast(brush));
-            _ = rt.vtbl.Release(@ptrCast(rt));
-            _ = factory.vtbl.Release(@ptrCast(factory));
-            return error.DWriteFactoryCreateFailed;
-        }
-        const dwrite: *IDWriteFactoryFace = @ptrCast(@alignCast(dwrite_raw));
-
-        // ── 5. Create text formats for each font scale ────────────────────────
-        // D2D uses DIPs (device-independent pixels = 1/96 inch).
-        // We pass font sizes in DIPs; D2D + DirectWrite handle DPI scaling.
+        // ── 6. DirectWrite factory + text formats (OPTIONAL) ──────────────────
+        // DWriteCreateFactory is currently failing on this dev box with E_NOINTERFACE
+        // for a verifiably-correct IID_IDWriteFactory — a pre-existing anomaly the
+        // legacy d2d backend never hit (the app uses the GDI software backend). Rather
+        // than fail the whole renderer, text degrades gracefully: dwrite stays null and
+        // drawText is skipped, so the device-context + swapchain path (shapes, images,
+        // GPU video) still works. TODO: root-cause DWrite on the target machine.
+        var dwrite: ?*IDWriteFactoryFace = null;
         var text_formats: [NUM_FONT_SCALES]?*IDWriteTextFormatFace = .{null} ** NUM_FONT_SCALES;
-        for (FONT_PX, 0..) |px, i| {
-            if (px == 0) continue;
-            const weight: u32 = if (px >= 32) DWRITE_FONT_WEIGHT_SEMIBOLD else DWRITE_FONT_WEIGHT_NORMAL;
-            var fmt_raw: ?*anyopaque = null;
-            const hr_fmt = dwrite.vtbl.CreateTextFormat(
-                @ptrCast(dwrite),
-                SEGOE_UI_VAR,
-                null,
-                weight,
-                DWRITE_FONT_STYLE_NORMAL,
-                DWRITE_FONT_STRETCH_NORMAL,
-                px,
-                LOCALE_EN_US,
-                &fmt_raw,
-            );
-            if (hr_fmt == S_OK and fmt_raw != null) {
-                text_formats[i] = @ptrCast(@alignCast(fmt_raw.?));
+        var dwrite_raw: *anyopaque = undefined;
+        if (DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFactory, &dwrite_raw) == S_OK) {
+            const dw: *IDWriteFactoryFace = @ptrCast(@alignCast(dwrite_raw));
+            dwrite = dw;
+            for (FONT_PX, 0..) |px, i| {
+                if (px == 0) continue;
+                const weight: u32 = if (px >= 32) DWRITE_FONT_WEIGHT_SEMIBOLD else DWRITE_FONT_WEIGHT_NORMAL;
+                var fmt_raw: ?*anyopaque = null;
+                const hr_fmt = dw.vtbl.CreateTextFormat(@ptrCast(dw), SEGOE_UI_VAR, null, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, LOCALE_EN_US, &fmt_raw);
+                if (hr_fmt == S_OK and fmt_raw != null) text_formats[i] = @ptrCast(@alignCast(fmt_raw.?));
             }
-            // If creation fails (e.g. font not found), text_formats[i] stays null — text is skipped
         }
-
-        // Query actual DPI from render target
-        var dpi_x: FLOAT = 96.0;
-        var dpi_y: FLOAT = 96.0;
-        rt.vtbl.GetDpi(@ptrCast(rt), &dpi_x, &dpi_y);
-        const dpi_scale: f32 = dpi_x / 96.0;
 
         return Renderer{
-            .factory       = factory,
-            .render_target = rt,
-            .brush         = brush,
-            .dwrite        = dwrite,
-            .text_formats  = text_formats,
-            .dpi_scale     = dpi_scale,
-            .width         = width,
-            .height        = height,
+            .render_target = dc_render,
+            .device_context = dc_ctx,
+            .d2d_device = d2d_device,
+            .swapchain = swapchain,
+            .d3d_device = d3d_device,
+            .target_bitmap = target,
+            .brush = brush,
+            .dwrite = dwrite,
+            .text_formats = text_formats,
+            .dpi_scale = dpi / 96.0,
+            .width = width,
+            .height = height,
             .begin_draw_called = false,
-            .clip_pushed   = false,
+            .clip_pushed = false,
         };
     }
 
@@ -633,10 +809,17 @@ pub const Renderer = struct {
                 fmt.* = null;
             }
         }
-        _ = self.dwrite.vtbl.Release(@ptrCast(self.dwrite));
+        if (self.dwrite) |dw| _ = dw.vtbl.Release(@ptrCast(dw));
         _ = self.brush.vtbl.Release(@ptrCast(self.brush));
+        // Unbind + release the swapchain target, then the device context (which is
+        // the same COM object as render_target — release once), device, swapchain,
+        // and finally the D3D11 device.
+        self.device_context.vtbl.SetTarget(@ptrCast(self.device_context), null);
+        if (self.target_bitmap) |b| { relCom(b); self.target_bitmap = null; }
         _ = self.render_target.vtbl.Release(@ptrCast(self.render_target));
-        _ = self.factory.vtbl.Release(@ptrCast(self.factory));
+        relCom(@ptrCast(self.d2d_device));
+        relCom(@ptrCast(self.swapchain));
+        relCom(self.d3d_device);
     }
 
     // ── DPI helpers ───────────────────────────────────────────────────────────
@@ -767,14 +950,17 @@ pub const Renderer = struct {
     pub fn textWidthScaled(self: *const Renderer, text: []const u8, scale: u32) u32 {
         const idx = @min(scale, NUM_FONT_SCALES - 1);
         const fmt = self.text_formats[idx] orelse return @intCast(text.len * 8);
+        // text_formats[idx] is only non-null when dwrite was created, so this unwrap
+        // is safe whenever we get here.
+        const dwrite = self.dwrite orelse return @intCast(text.len * 8);
 
         var wbuf: [2048]u16 = undefined;
         const wlen = std.unicode.utf8ToUtf16Le(&wbuf, text) catch return 0;
         if (wlen == 0) return 0;
 
         var layout_raw: ?*anyopaque = null;
-        const hr = self.dwrite.vtbl.CreateTextLayout(
-            @ptrCast(self.dwrite),
+        const hr = dwrite.vtbl.CreateTextLayout(
+            @ptrCast(dwrite),
             wbuf[0..wlen].ptr,
             @intCast(wlen),
             @ptrCast(fmt),
@@ -807,6 +993,8 @@ pub const Renderer = struct {
             null,
         );
         self.begin_draw_called = false;
+        // Present the rendered backbuffer to the window (vsync-synced).
+        _ = self.swapchain.vtbl.Present(@ptrCast(self.swapchain), 1, 0);
     }
 
     /// No-op for D2D (text is drawn inline, no queue).
@@ -923,7 +1111,8 @@ pub const Renderer = struct {
     // ── Resize ────────────────────────────────────────────────────────────────
 
     pub fn resize(self: *Renderer, width: u32, height: u32) void {
-        // End any outstanding draw before resizing
+        if (width == 0 or height == 0) return;
+        // End any outstanding draw before resizing.
         if (self.begin_draw_called) {
             if (self.clip_pushed) {
                 self.render_target.vtbl.PopAxisAlignedClip(@ptrCast(self.render_target));
@@ -932,8 +1121,12 @@ pub const Renderer = struct {
             _ = self.render_target.vtbl.EndDraw(@ptrCast(self.render_target), null, null);
             self.begin_draw_called = false;
         }
-        const new_size = D2D1_SIZE_U{ .width = width, .height = height };
-        _ = self.render_target.vtbl.Resize(@ptrCast(self.render_target), &new_size);
+        // The target bitmap holds a reference to the old backbuffer, so it MUST be
+        // unbound + released before ResizeBuffers can free/recreate the buffers.
+        self.device_context.vtbl.SetTarget(@ptrCast(self.device_context), null);
+        if (self.target_bitmap) |b| { relCom(b); self.target_bitmap = null; }
+        _ = self.swapchain.vtbl.ResizeBuffers(@ptrCast(self.swapchain), 0, width, height, DXGI_FORMAT_UNKNOWN, 0);
+        self.target_bitmap = makeSwapchainTarget(self.swapchain, self.device_context) catch null;
         self.width  = width;
         self.height = height;
     }
