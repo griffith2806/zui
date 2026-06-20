@@ -57,6 +57,16 @@ const IID_IDWriteFactory = GUID{
     .Data1 = 0xB859BB69, .Data2 = 0x3142, .Data3 = 0x11DB,
     .Data4 = .{ 0x92, 0xAF, 0x00, 0x24, 0xE9, 0x66, 0xF6, 0x8A },
 };
+// {30572F99-DAC6-41DB-A16E-0486307E606A}  IID_IDWriteFactory1
+// On Windows 11 24H2, DWriteCreateFactory returns E_NOINTERFACE for the legacy
+// IID_IDWriteFactory but succeeds for IID_IDWriteFactory1 (a superset interface).
+// IDWriteFactory1 derives from IDWriteFactory, so the returned object exposes every
+// IDWriteFactory method at the same vtbl slots — we request this and use it as an
+// IDWriteFactory unchanged.
+const IID_IDWriteFactory1 = GUID{
+    .Data1 = 0x30572F99, .Data2 = 0xDAC6, .Data3 = 0x41DB,
+    .Data4 = .{ 0xA1, 0x6E, 0x04, 0x86, 0x30, 0x7E, 0x60, 0x6A },
+};
 
 // ── D2D / DWrite constants ────────────────────────────────────────────────────
 
@@ -1007,17 +1017,15 @@ pub const Renderer = struct {
         const brush: *ID2D1SolidColorBrushFace = @ptrCast(@alignCast(brush_raw.?));
         errdefer relCom(@ptrCast(brush));
 
-        // ── 6. DirectWrite factory + text formats (OPTIONAL) ──────────────────
-        // DWriteCreateFactory is currently failing on this dev box with E_NOINTERFACE
-        // for a verifiably-correct IID_IDWriteFactory — a pre-existing anomaly the
-        // legacy d2d backend never hit (the app uses the GDI software backend). Rather
-        // than fail the whole renderer, text degrades gracefully: dwrite stays null and
-        // drawText is skipped, so the device-context + swapchain path (shapes, images,
-        // GPU video) still works. TODO: root-cause DWrite on the target machine.
+        // ── 6. DirectWrite factory + text formats ─────────────────────────────
+        // Request IID_IDWriteFactory1 (not the legacy IID_IDWriteFactory) — see the
+        // IID note above for the Windows 11 24H2 E_NOINTERFACE quirk. Text still
+        // degrades gracefully (dwrite stays null, drawText skipped) if it ever fails,
+        // so shapes/images/GPU video keep rendering.
         var dwrite: ?*IDWriteFactoryFace = null;
         var text_formats: [NUM_FONT_SCALES]?*IDWriteTextFormatFace = .{null} ** NUM_FONT_SCALES;
         var dwrite_raw: *anyopaque = undefined;
-        if (DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFactory, &dwrite_raw) == S_OK) {
+        if (DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFactory1, &dwrite_raw) == S_OK) {
             const dw: *IDWriteFactoryFace = @ptrCast(@alignCast(dwrite_raw));
             dwrite = dw;
             for (FONT_PX, 0..) |px, i| {
