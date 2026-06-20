@@ -653,6 +653,8 @@ pub const LINE_H: u32 = 18;
 
 // Segoe UI Variable family name as UTF-16 literal
 const SEGOE_UI_VAR = std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI Variable");
+// Icon font: "Segoe MDL2 Assets" (ships on Win10 1709+/11) for UI glyphs.
+const SEGOE_ICONS = std.unicode.utf8ToUtf16LeStringLiteral("Segoe MDL2 Assets");
 const LOCALE_EN_US = std.unicode.utf8ToUtf16LeStringLiteral("en-us");
 const LOCALE_EMPTY = std.unicode.utf8ToUtf16LeStringLiteral("");
 
@@ -906,6 +908,7 @@ pub const Renderer = struct {
     brush:          *ID2D1SolidColorBrushFace,
     dwrite:         ?*IDWriteFactoryFace, // null if DirectWrite is unavailable (text disabled)
     text_formats:   [NUM_FONT_SCALES]?*IDWriteTextFormatFace,
+    icon_formats:   [NUM_FONT_SCALES]?*IDWriteTextFormatFace, // Segoe MDL2 Assets
     dpi_scale:      f32,
     width:          u32,
     height:         u32,
@@ -1024,6 +1027,7 @@ pub const Renderer = struct {
         // so shapes/images/GPU video keep rendering.
         var dwrite: ?*IDWriteFactoryFace = null;
         var text_formats: [NUM_FONT_SCALES]?*IDWriteTextFormatFace = .{null} ** NUM_FONT_SCALES;
+        var icon_formats: [NUM_FONT_SCALES]?*IDWriteTextFormatFace = .{null} ** NUM_FONT_SCALES;
         var dwrite_raw: *anyopaque = undefined;
         if (DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFactory1, &dwrite_raw) == S_OK) {
             const dw: *IDWriteFactoryFace = @ptrCast(@alignCast(dwrite_raw));
@@ -1032,8 +1036,11 @@ pub const Renderer = struct {
                 if (px == 0) continue;
                 const weight: u32 = if (px >= 32) DWRITE_FONT_WEIGHT_SEMIBOLD else DWRITE_FONT_WEIGHT_NORMAL;
                 var fmt_raw: ?*anyopaque = null;
-                const hr_fmt = dw.vtbl.CreateTextFormat(@ptrCast(dw), SEGOE_UI_VAR, null, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, LOCALE_EN_US, &fmt_raw);
-                if (hr_fmt == S_OK and fmt_raw != null) text_formats[i] = @ptrCast(@alignCast(fmt_raw.?));
+                if (dw.vtbl.CreateTextFormat(@ptrCast(dw), SEGOE_UI_VAR, null, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, LOCALE_EN_US, &fmt_raw) == S_OK and fmt_raw != null)
+                    text_formats[i] = @ptrCast(@alignCast(fmt_raw.?));
+                var icon_raw: ?*anyopaque = null;
+                if (dw.vtbl.CreateTextFormat(@ptrCast(dw), SEGOE_ICONS, null, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, LOCALE_EN_US, &icon_raw) == S_OK and icon_raw != null)
+                    icon_formats[i] = @ptrCast(@alignCast(icon_raw.?));
             }
         }
 
@@ -1048,6 +1055,7 @@ pub const Renderer = struct {
             .brush = brush,
             .dwrite = dwrite,
             .text_formats = text_formats,
+            .icon_formats = icon_formats,
             .dpi_scale = dpi / 96.0,
             .width = width,
             .height = height,
@@ -1067,12 +1075,12 @@ pub const Renderer = struct {
             _ = self.render_target.vtbl.EndDraw(@ptrCast(self.render_target), null, null);
             self.begin_draw_called = false;
         }
-        // Release text formats
+        // Release text + icon formats
         for (&self.text_formats) |*fmt| {
-            if (fmt.*) |f| {
-                _ = f.vtbl.Release(@ptrCast(f));
-                fmt.* = null;
-            }
+            if (fmt.*) |f| { _ = f.vtbl.Release(@ptrCast(f)); fmt.* = null; }
+        }
+        for (&self.icon_formats) |*fmt| {
+            if (fmt.*) |f| { _ = f.vtbl.Release(@ptrCast(f)); fmt.* = null; }
         }
         if (self.dwrite) |dw| _ = dw.vtbl.Release(@ptrCast(dw));
         _ = self.brush.vtbl.Release(@ptrCast(self.brush));
@@ -1181,9 +1189,19 @@ pub const Renderer = struct {
     /// Uses ID2D1RenderTarget::DrawText directly — no IDWriteTextLayout allocation,
     /// eliminating ~50 COM alloc/release pairs per frame at 60 fps.
     pub fn drawTextScaled(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
-        if (!self.begin_draw_called) return;
         const idx = @min(scale, NUM_FONT_SCALES - 1);
-        const fmt = self.text_formats[idx] orelse return;
+        self.drawGlyphs(text, x, y, color, self.text_formats[idx]);
+    }
+
+    /// Draw an icon glyph (Segoe MDL2 Assets) at an integer scale.
+    pub fn drawIcon(self: *Renderer, icon: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
+        const idx = @min(scale, NUM_FONT_SCALES - 1);
+        self.drawGlyphs(icon, x, y, color, self.icon_formats[idx]);
+    }
+
+    fn drawGlyphs(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, fmt_opt: ?*IDWriteTextFormatFace) void {
+        if (!self.begin_draw_called) return;
+        const fmt = fmt_opt orelse return;
 
         var wbuf: [2048]u16 = undefined;
         const wlen = std.unicode.utf8ToUtf16Le(&wbuf, text) catch return;
@@ -1216,9 +1234,18 @@ pub const Renderer = struct {
 
     pub fn textWidthScaled(self: *const Renderer, text: []const u8, scale: u32) u32 {
         const idx = @min(scale, NUM_FONT_SCALES - 1);
-        const fmt = self.text_formats[idx] orelse return @intCast(text.len * 8);
-        // text_formats[idx] is only non-null when dwrite was created, so this unwrap
-        // is safe whenever we get here.
+        return self.glyphsWidth(text, self.text_formats[idx]);
+    }
+
+    /// Measure icon-glyph width (Segoe MDL2 Assets).
+    pub fn iconWidthScaled(self: *const Renderer, icon: []const u8, scale: u32) u32 {
+        const idx = @min(scale, NUM_FONT_SCALES - 1);
+        return self.glyphsWidth(icon, self.icon_formats[idx]);
+    }
+
+    fn glyphsWidth(self: *const Renderer, text: []const u8, fmt_opt: ?*IDWriteTextFormatFace) u32 {
+        const fmt = fmt_opt orelse return @intCast(text.len * 8);
+        // A format is only non-null when dwrite was created, so this unwrap is safe.
         const dwrite = self.dwrite orelse return @intCast(text.len * 8);
 
         var wbuf: [2048]u16 = undefined;
