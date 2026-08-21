@@ -479,7 +479,7 @@ extern "dwrite" fn DWriteCreateFactory(
 
 extern "user32" fn GetDpiForWindow(hwnd: *anyopaque) callconv(winapi) u32;
 
-extern "d3d11" fn D3D11CreateDeviceAndSwapChain(
+extern "d3d11" fn D3D11CreateDevice(
     pAdapter: ?*anyopaque,
     DriverType: u32,
     Software: ?*anyopaque,
@@ -487,12 +487,12 @@ extern "d3d11" fn D3D11CreateDeviceAndSwapChain(
     pFeatureLevels: ?*const u32,
     FeatureLevels: u32,
     SDKVersion: u32,
-    pSwapChainDesc: *const DXGI_SWAP_CHAIN_DESC,
-    ppSwapChain: *?*anyopaque,
     ppDevice: *?*anyopaque,
     pFeatureLevel: ?*u32,
     ppImmediateContext: *?*anyopaque,
 ) callconv(winapi) HRESULT;
+
+extern "dxgi" fn CreateDXGIFactory1(riid: *const GUID, ppFactory: *?*anyopaque) callconv(winapi) HRESULT;
 
 extern "d2d1" fn D2D1CreateDevice(
     dxgiDevice: *anyopaque,
@@ -514,6 +514,10 @@ const ID3D11MultithreadVtbl = extern struct {
 const ID3D11MultithreadFace = extern struct { vtbl: *const ID3D11MultithreadVtbl };
 const DXGI_USAGE_RENDER_TARGET_OUTPUT: u32 = 0x20;
 const DXGI_SWAP_EFFECT_DISCARD: u32 = 0;
+const DXGI_SWAP_EFFECT_FLIP_DISCARD: u32 = 4;
+const DXGI_SCALING_STRETCH: u32 = 0;
+const DXGI_ALPHA_MODE_IGNORE: u32 = 3;
+const FLIP_BUFFER_COUNT: u32 = 2;
 const DXGI_FORMAT_UNKNOWN: u32 = 0;
 const D2D1_BITMAP_OPTIONS_TARGET: u32 = 1;
 const D2D1_BITMAP_OPTIONS_CANNOT_DRAW: u32 = 2;
@@ -523,6 +527,10 @@ const D2D1_DEVICE_CONTEXT_OPTIONS_NONE: u32 = 0;
 const IID_IDXGIDevice = GUID{ .Data1 = 0x54ec77fa, .Data2 = 0x1377, .Data3 = 0x44e6, .Data4 = .{ 0x8c, 0x32, 0x88, 0xfd, 0x5f, 0x44, 0xc8, 0x4c } };
 // {cafcb56c-6ac3-4889-bf47-9e23bbd260ec} IID_IDXGISurface
 const IID_IDXGISurface = GUID{ .Data1 = 0xcafcb56c, .Data2 = 0x6ac3, .Data3 = 0x4889, .Data4 = .{ 0xbf, 0x47, 0x9e, 0x23, 0xbb, 0xd2, 0x60, 0xec } };
+// {50c83a1c-e072-4c48-87b0-3630fa36a6d0} IID_IDXGIFactory2
+const IID_IDXGIFactory2 = GUID{ .Data1 = 0x50c83a1c, .Data2 = 0xe072, .Data3 = 0x4c48, .Data4 = .{ 0x87, 0xb0, 0x36, 0x30, 0xfa, 0x36, 0xa6, 0xd0 } };
+// {a8be2ac4-199f-4946-b331-79599fb98de7} IID_IDXGISwapChain2
+const IID_IDXGISwapChain2 = GUID{ .Data1 = 0xa8be2ac4, .Data2 = 0x199f, .Data3 = 0x4946, .Data4 = .{ 0xb3, 0x31, 0x79, 0x59, 0x9f, 0xb9, 0x8d, 0xe7 } };
 
 const DXGI_RATIONAL = extern struct { Numerator: u32, Denominator: u32 };
 const DXGI_MODE_DESC = extern struct {
@@ -543,6 +551,25 @@ const DXGI_SWAP_CHAIN_DESC = extern struct {
     Windowed: BOOL,
     SwapEffect: u32,
     Flags: u32,
+};
+const DXGI_SWAP_CHAIN_DESC1 = extern struct {
+    Width: UINT,
+    Height: UINT,
+    Format: u32,
+    Stereo: BOOL,
+    SampleDesc: DXGI_SAMPLE_DESC,
+    BufferUsage: u32,
+    BufferCount: UINT,
+    Scaling: u32,
+    SwapEffect: u32,
+    AlphaMode: u32,
+    Flags: UINT,
+};
+const DXGI_SWAP_CHAIN_FULLSCREEN_DESC = extern struct {
+    RefreshRate: DXGI_RATIONAL,
+    ScanlineOrdering: u32,
+    Scaling: u32,
+    Windowed: BOOL,
 };
 const D2D1_BITMAP_PROPERTIES1 = extern struct {
     pixelFormat: D2D1_PIXEL_FORMAT,
@@ -593,6 +620,25 @@ const IDXGISwapChainVtbl = extern struct {
     // ResizeTarget … unused
 };
 const IDXGISwapChainFace = extern struct { vtbl: *const IDXGISwapChainVtbl };
+
+// IDXGIFactory2 : ... : IDXGIObject. Only CreateSwapChainForHwnd (slot 15) is used.
+const IDXGIFactory2Vtbl = extern struct {
+    QueryInterface: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:        *const fn (*anyopaque) callconv(winapi) ULONG,
+    // IDXGIObject(4) + IDXGIFactory(5) + IDXGIFactory1(2) + IsWindowedStereoEnabled(1) = slots 3..14
+    _pad_3_14: [12]*const anyopaque,
+    CreateSwapChainForHwnd: *const fn (*anyopaque, *anyopaque, HWND, *const DXGI_SWAP_CHAIN_DESC1, ?*const DXGI_SWAP_CHAIN_FULLSCREEN_DESC, ?*anyopaque, *?*anyopaque) callconv(winapi) HRESULT, // 15
+};
+const IDXGIFactory2Face = extern struct { vtbl: *const IDXGIFactory2Vtbl };
+
+// IDXGISwapChain2 adds SetMaximumFrameLatency at slot 31 (after IDXGISwapChain
+// 0..17, IDXGISwapChain1 18..28, SetSourceSize 29, GetSourceSize 30).
+const IDXGISwapChain2Vtbl = extern struct {
+    _pad_0_30: [31]*const anyopaque,
+    SetMaximumFrameLatency: *const fn (*anyopaque, u32) callconv(winapi) HRESULT, // 31
+};
+const IDXGISwapChain2Face = extern struct { vtbl: *const IDXGISwapChain2Vtbl };
 
 // ID2D1DeviceContext : ID2D1RenderTarget. Slots 0-57 are identical to
 // ID2D1RenderTarget, so the existing draw methods call through the
@@ -914,6 +960,7 @@ pub const Renderer = struct {
     height:         u32,
     begin_draw_called: bool,
     clip_pushed:    bool,
+    vsync:          bool = true,
 
     /// The D3D11 device backing this renderer's swapchain. The H.264 decoder can
     /// DXVA-decode on it so its NV12 texture is usable as a D2D effect input with
@@ -922,41 +969,77 @@ pub const Renderer = struct {
         return self.d3d_device;
     }
 
+    /// Enable/disable vsync on the swapchain present. When disabled, Present()
+    /// returns immediately instead of blocking on the next vblank, which removes
+    /// the render loop's dependency on the display refresh cadence (useful for
+    /// smoothing out-of-cadence video frame arrival at the cost of tearing).
+    pub fn setVsync(self: *Renderer, on: bool) void {
+        self.vsync = on;
+    }
+
     /// Initialize the D2D renderer for the given HWND.
     /// `hwnd` must be a valid HWND; `width` and `height` are in physical pixels.
     pub fn init(hwnd: *anyopaque, width: u32, height: u32) !Renderer {
-        // ── 1. D3D11 device + DXGI swapchain in one call ──────────────────────
-        const scd = DXGI_SWAP_CHAIN_DESC{
-            .BufferDesc = .{
-                .Width = width,
-                .Height = height,
-                .RefreshRate = .{ .Numerator = 0, .Denominator = 1 },
-                .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
-                .ScanlineOrdering = 0,
-                .Scaling = 0,
-            },
-            .SampleDesc = .{ .Count = 1, .Quality = 0 },
-            .BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
-            .BufferCount = 1,
-            .OutputWindow = @ptrCast(hwnd),
-            .Windowed = 1,
-            .SwapEffect = DXGI_SWAP_EFFECT_DISCARD,
-            .Flags = 0,
-        };
-        var swapchain_raw: ?*anyopaque = null;
+        // ── 1. D3D11 device ───────────────────────────────────────────────────
         var device_raw: ?*anyopaque = null;
         var ctx_raw: ?*anyopaque = null;
-        const hr_dev = D3D11CreateDeviceAndSwapChain(
+        const hr_dev = D3D11CreateDevice(
             null, D3D_DRIVER_TYPE_HARDWARE, null,
             D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, null, 0, D3D11_SDK_VERSION,
-            &scd, &swapchain_raw, &device_raw, null, &ctx_raw,
+            &device_raw, null, &ctx_raw,
         );
-        if (hr_dev != S_OK or device_raw == null or swapchain_raw == null)
+        if (hr_dev != S_OK or device_raw == null)
             return error.D3D11CreateFailed;
         const d3d_device = device_raw.?;
         errdefer relCom(d3d_device);
         const d3d_ctx = ctx_raw orelse return error.D3D11CreateFailed; // kept for the VideoProcessor (NV12 path)
         errdefer relCom(d3d_ctx);
+
+        // ── 2. Flip-model DXGI swapchain (low-latency DWM presentation) ───────
+        // The legacy bitblt DISCARD + BufferCount=1 swapchain forces every frame
+        // through an extra DWM copy and stalls the render loop when frame arrival
+        // is out-of-cadence with vblank. The flip model (FLIP_DISCARD, 2 buffers)
+        // presents on the DWM "direct flip" path; SetMaximumFrameLatency(1) caps
+        // the queue at one frame in flight for the lowest vsync latency.
+        var factory_raw: ?*anyopaque = null;
+        if (CreateDXGIFactory1(&IID_IDXGIFactory2, &factory_raw) != S_OK or factory_raw == null)
+            return error.DxgiFactoryFailed;
+        const factory: *IDXGIFactory2Face = @ptrCast(@alignCast(factory_raw.?));
+        defer relCom(@ptrCast(factory));
+
+        const scd1 = DXGI_SWAP_CHAIN_DESC1{
+            .Width = width,
+            .Height = height,
+            .Format = DXGI_FORMAT_B8G8R8A8_UNORM,
+            .Stereo = 0,
+            .SampleDesc = .{ .Count = 1, .Quality = 0 },
+            .BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
+            .BufferCount = FLIP_BUFFER_COUNT,
+            .Scaling = DXGI_SCALING_STRETCH,
+            .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
+            .AlphaMode = DXGI_ALPHA_MODE_IGNORE,
+            .Flags = 0,
+        };
+        const fscd = DXGI_SWAP_CHAIN_FULLSCREEN_DESC{
+            .RefreshRate = .{ .Numerator = 0, .Denominator = 1 },
+            .ScanlineOrdering = 0,
+            .Scaling = DXGI_SCALING_STRETCH,
+            .Windowed = 1,
+        };
+        var swapchain_raw: ?*anyopaque = null;
+        if (factory.vtbl.CreateSwapChainForHwnd(@ptrCast(factory), d3d_device, @ptrCast(hwnd), &scd1, &fscd, null, &swapchain_raw) != S_OK or swapchain_raw == null)
+            return error.SwapchainCreateFailed;
+        {
+            var sc2_raw: ?*anyopaque = null;
+            const u: *IUnknownFace = @ptrCast(@alignCast(swapchain_raw.?));
+            if (u.vtbl.QueryInterface(@ptrCast(u), &IID_IDXGISwapChain2, &sc2_raw) == S_OK) {
+                if (sc2_raw) |s| {
+                    const sc2: *IDXGISwapChain2Face = @ptrCast(@alignCast(s));
+                    _ = sc2.vtbl.SetMaximumFrameLatency(@ptrCast(sc2), 1);
+                    relCom(s);
+                }
+            }
+        }
         // The decoder will DXVA-decode on this device from the receive thread while
         // the renderer presents on the main thread — serialize device access.
         {
@@ -973,7 +1056,7 @@ pub const Renderer = struct {
         const swapchain: *IDXGISwapChainFace = @ptrCast(@alignCast(swapchain_raw.?));
         errdefer relCom(@ptrCast(swapchain));
 
-        // ── 2. D3D device → IDXGIDevice → D2D device → device context ─────────
+        // ── 3. D3D device → IDXGIDevice → D2D device → device context ─────────
         var dxgi_dev_raw: ?*anyopaque = null;
         {
             const u: *IUnknownFace = @ptrCast(@alignCast(d3d_device));
@@ -998,16 +1081,16 @@ pub const Renderer = struct {
         const dc_render: *ID2D1HwndRenderTargetFace = @ptrCast(@alignCast(dc));
         const dc_ctx: *ID2D1DeviceContextFace = @ptrCast(@alignCast(dc));
 
-        // ── 3. Match the window DPI so logical coords scale to physical pixels ─
+        // ── 4. Match the window DPI so logical coords scale to physical pixels ─
         const dpi: f32 = blk: {
             const d = GetDpiForWindow(hwnd);
             break :blk if (d > 0) @floatFromInt(d) else 96.0;
         };
         dc_render.vtbl.SetDpi(@ptrCast(dc_render), dpi, dpi);
 
-        // ── 4. Bind the swapchain backbuffer as the render target ─────────────
-        const target = try makeSwapchainTarget(swapchain, dc_ctx);
-        errdefer relCom(target);
+        // (No backbuffer target is bound here: the flip-model swapchain rotates
+        // the backbuffer identity every Present, so `clear()` re-acquires it each
+        // frame via makeSwapchainTarget.)
 
         dc_render.vtbl.SetAntialiasMode(@ptrCast(dc_render), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         dc_render.vtbl.SetTextAntialiasMode(@ptrCast(dc_render), D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
@@ -1051,7 +1134,7 @@ pub const Renderer = struct {
             .swapchain = swapchain,
             .d3d_device = d3d_device,
             .d3d_ctx = d3d_ctx,
-            .target_bitmap = target,
+            .target_bitmap = null,
             .brush = brush,
             .dwrite = dwrite,
             .text_formats = text_formats,
@@ -1134,6 +1217,12 @@ pub const Renderer = struct {
     /// flushText() calls EndDraw() to present.
     pub fn clear(self: *Renderer, color: Color) void {
         if (!self.begin_draw_called) {
+            // Flip-model swapchain: the backbuffer identity rotates after every
+            // Present, so a target acquired in a previous frame points at the now
+            // front buffer. Re-acquire the current backbuffer each frame.
+            if (self.target_bitmap == null) {
+                self.target_bitmap = makeSwapchainTarget(self.swapchain, self.device_context) catch null;
+            }
             self.render_target.vtbl.BeginDraw(@ptrCast(self.render_target));
             self.begin_draw_called = true;
         }
@@ -1287,8 +1376,15 @@ pub const Renderer = struct {
             null,
         );
         self.begin_draw_called = false;
-        // Present the rendered backbuffer to the window (vsync-synced).
-        _ = self.swapchain.vtbl.Present(@ptrCast(self.swapchain), 1, 0);
+        // Unbind + release the backbuffer target BEFORE Present so D2D drops its
+        // reference on the buffer that is about to become the front buffer. The
+        // flip model forbids holding the presented buffer; re-acquired on the
+        // next clear().
+        self.device_context.vtbl.SetTarget(@ptrCast(self.device_context), null);
+        if (self.target_bitmap) |b| { relCom(b); self.target_bitmap = null; }
+        // Present the rendered backbuffer to the window. SyncInterval=1 blocks on
+        // vblank (vsync); SyncInterval=0 returns immediately (no vsync).
+        _ = self.swapchain.vtbl.Present(@ptrCast(self.swapchain), if (self.vsync) 1 else 0, 0);
     }
 
     /// No-op for D2D (text is drawn inline, no queue).
@@ -1515,8 +1611,8 @@ pub const Renderer = struct {
         // unbound + released before ResizeBuffers can free/recreate the buffers.
         self.device_context.vtbl.SetTarget(@ptrCast(self.device_context), null);
         if (self.target_bitmap) |b| { relCom(b); self.target_bitmap = null; }
-        _ = self.swapchain.vtbl.ResizeBuffers(@ptrCast(self.swapchain), 0, width, height, DXGI_FORMAT_UNKNOWN, 0);
-        self.target_bitmap = makeSwapchainTarget(self.swapchain, self.device_context) catch null;
+        _ = self.swapchain.vtbl.ResizeBuffers(@ptrCast(self.swapchain), FLIP_BUFFER_COUNT, width, height, DXGI_FORMAT_UNKNOWN, 0);
+        // target_bitmap is re-acquired on the next clear().
         self.width  = width;
         self.height = height;
     }
