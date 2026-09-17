@@ -1752,6 +1752,23 @@ pub const Renderer = struct {
         return self.textWidthScaled(text, nearestScaleForPx(size_px));
     }
 
+    /// The y to pass to `drawTextSized` so the visual centre of the text lands
+    /// on `center_y`. No font metrics are available here, so the offset is the
+    /// `0.68 * size_px` approximation used as the fallback by the other backends.
+    pub fn textCenterY(self: *const Renderer, center_y: i32, size_px: f32, family: []const u8) i32 {
+        _ = self;
+        _ = family;
+        return center_y - @as(i32, @intFromFloat(@round(0.68 * size_px)));
+    }
+
+    /// Draw `text` horizontally AND vertically centred inside `rect`.
+    pub fn drawTextCentered(self: *Renderer, text: []const u8, rect: Rect, color: Color, size_px: f32, family: []const u8) void {
+        const w = self.textWidthSized(text, size_px, family);
+        const x = rect.x + @as(i32, @intCast((rect.width -| w) / 2));
+        const y = self.textCenterY(rect.y + @as(i32, @intCast(rect.height / 2)), size_px, family);
+        self.drawTextSized(text, x, y, color, size_px, family);
+    }
+
     pub fn clearTextQueue(self: *Renderer) void {
         _ = self;
     }
@@ -1840,6 +1857,11 @@ fn shadowLayerColor(color: Color, a: u8) Color {
 test "drawTextSized / textWidthSized are analysed" {
     _ = &Renderer.drawTextSized;
     _ = &Renderer.textWidthSized;
+}
+
+test "text centering is analysed" {
+    _ = &Renderer.textCenterY;
+    _ = &Renderer.drawTextCentered;
 }
 
 test "drawShadow is analysed" {

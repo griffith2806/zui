@@ -197,6 +197,15 @@ const DWRITE_TEXT_METRICS = extern struct {
     lineCount:             u32,
 };
 
+const DWRITE_LINE_METRICS = extern struct {
+    length:                   u32,
+    trailingWhitespaceLength: u32,
+    newlineLength:            u32,
+    height:                   FLOAT,
+    baseline:                 FLOAT,
+    isWhitespace:             BOOL,
+};
+
 // ── COM vtable structs ────────────────────────────────────────────────────────
 //
 // Pattern from wic.zig / file_dialog.zig: face = extern struct { vtbl: *const VtblType }
@@ -804,6 +813,9 @@ const SizedTextFormat = struct {
     family_len: u8  = 0,
     family:     [FAMILY_MAX]u8 = [_]u8{0} ** FAMILY_MAX,
     fmt:        ?*IDWriteTextFormatFace = null,
+    /// First-line baseline in DIPs (== logical pixels for this backend), measured
+    /// once when the format is created. -1.0 means measurement failed.
+    baseline:   f32 = -1.0,
 };
 
 /// Approximate line-height for layout purposes (scale=1 body text).
@@ -815,6 +827,8 @@ const SEGOE_UI_VAR = std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI Variable")
 const SEGOE_ICONS = std.unicode.utf8ToUtf16LeStringLiteral("Segoe MDL2 Assets");
 const LOCALE_EN_US = std.unicode.utf8ToUtf16LeStringLiteral("en-us");
 const LOCALE_EMPTY = std.unicode.utf8ToUtf16LeStringLiteral("");
+// Sample string used to measure a format's first-line baseline once at cache time.
+const BASELINE_SAMPLE = std.unicode.utf8ToUtf16LeStringLiteral("Ag");
 
 // ── D3D11 VideoProcessor (GPU NV12→BGRA + scale) bindings ─────────────────────
 // drawNv12 converts a decoded NV12 ID3D11Texture2D to BGRA on the GPU via
@@ -1646,8 +1660,64 @@ pub const Renderer = struct {
         slot.family_len = @intCast(fam.len);
         @memcpy(slot.family[0..fam.len], fam);
         slot.fmt = fmt;
+        // Measure the baseline once so textCenterY doesn't have to build a layout
+        // per call. -1.0 on failure → textCenterY uses the approximation.
+        slot.baseline = measureBaseline(dw, fmt);
         self_mut.sized_next = (self_mut.sized_next + 1) % FONT_CACHE_SLOTS;
         return fmt;
+    }
+
+    /// Measure the first-line baseline (DIPs) of `fmt` by laying out a short
+    /// sample string. Returns -1.0 if any DWrite call fails.
+    fn measureBaseline(dw: *IDWriteFactoryFace, fmt: *IDWriteTextFormatFace) f32 {
+        var layout_raw: ?*anyopaque = null;
+        if (dw.vtbl.CreateTextLayout(
+            @ptrCast(dw),
+            BASELINE_SAMPLE.ptr,
+            BASELINE_SAMPLE.len,
+            @ptrCast(fmt),
+            10000.0,
+            10000.0,
+            &layout_raw,
+        ) != S_OK or layout_raw == null) return -1.0;
+        const layout: *IDWriteTextLayoutFace = @ptrCast(@alignCast(layout_raw.?));
+        defer _ = layout.vtbl.Release(@ptrCast(layout));
+
+        var metrics: DWRITE_TEXT_METRICS = undefined;
+        if (layout.vtbl.GetMetrics(@ptrCast(layout), &metrics) != S_OK) return -1.0;
+
+        var lm: [1]DWRITE_LINE_METRICS = undefined;
+        var count: u32 = 1;
+        if (layout.vtbl.GetLineMetrics(@ptrCast(layout), @ptrCast(&lm), 1, &count) != S_OK or count == 0)
+            return -1.0;
+        return lm[0].baseline;
+    }
+
+    /// The y to pass to `drawTextSized` so the visual centre of the text (the
+    /// midpoint of its capital-glyph box) lands exactly on `center_y`.
+    ///
+    /// Uses the cached DirectWrite baseline for the requested size/family when
+    /// available; falls back to `round(0.68 * size_px)`.
+    pub fn textCenterY(self: *const Renderer, center_y: i32, size_px: f32, family: []const u8) i32 {
+        var offset: f32 = 0.68 * size_px;
+        if (self.getSizedFormat(size_px, family)) |fmt| {
+            const self_mut = @constCast(self);
+            for (&self_mut.sized_formats) |*sf| {
+                if (sf.fmt == fmt and sf.baseline >= 0.0) {
+                    offset = sf.baseline - 0.35 * size_px;
+                    break;
+                }
+            }
+        }
+        return center_y - @as(i32, @intFromFloat(@round(offset)));
+    }
+
+    /// Draw `text` horizontally AND vertically centred inside `rect`.
+    pub fn drawTextCentered(self: *Renderer, text: []const u8, rect: Rect, color: Color, size_px: f32, family: []const u8) void {
+        const w = self.textWidthSized(text, size_px, family);
+        const x = rect.x + @as(i32, @intCast((rect.width -| w) / 2));
+        const y = self.textCenterY(rect.y + @as(i32, @intCast(rect.height / 2)), size_px, family);
+        self.drawTextSized(text, x, y, color, size_px, family);
     }
 
     fn drawGlyphs(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, fmt_opt: ?*IDWriteTextFormatFace) void {
@@ -2038,6 +2108,12 @@ test "drawTextSized / textWidthSized are analysed" {
     _ = &Renderer.drawTextSized;
     _ = &Renderer.textWidthSized;
     _ = &Renderer.getSizedFormat;
+}
+
+test "text centering is analysed" {
+    _ = &Renderer.textCenterY;
+    _ = &Renderer.drawTextCentered;
+    _ = &Renderer.measureBaseline;
 }
 
 test "drawShadow is analysed" {

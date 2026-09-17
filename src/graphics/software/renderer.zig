@@ -20,6 +20,32 @@ const LONG   = i32;
 const GdiSize  = extern struct { cx: LONG, cy: LONG };
 const GdiRect  = extern struct { left: LONG, top: LONG, right: LONG, bottom: LONG };
 
+// Win32 TEXTMETRICW. Only the first five fields (tmHeight..tmExternalLeading)
+// are read for vertical centring; the rest are declared so the struct is the
+// correct size for GetTextMetricsW to fill.
+const TEXTMETRICW = extern struct {
+    tmHeight:            LONG,
+    tmAscent:            LONG,
+    tmDescent:           LONG,
+    tmInternalLeading:   LONG,
+    tmExternalLeading:   LONG,
+    tmAveCharWidth:      LONG,
+    tmMaxCharWidth:      LONG,
+    tmWeight:            LONG,
+    tmOverhang:          LONG,
+    tmDigitizedAspectX:  LONG,
+    tmDigitizedAspectY:  LONG,
+    tmFirstChar:         u16,
+    tmLastChar:          u16,
+    tmDefaultChar:       u16,
+    tmBreakChar:         u16,
+    tmItalic:            u8,
+    tmUnderlined:        u8,
+    tmStruckOut:         u8,
+    tmPitchAndFamily:    u8,
+    tmCharSet:           u8,
+};
+
 const TRANSPARENT_BK:     INT  = 1;
 const FW_NORMAL:          INT  = 400;
 const FW_SEMIBOLD:        INT  = 600;
@@ -52,6 +78,7 @@ extern "gdi32" fn SelectObject(hdc: HDC, h: *anyopaque) callconv(std.builtin.Cal
 extern "gdi32" fn DeleteObject(ho: *anyopaque) callconv(std.builtin.CallingConvention.winapi) BOOL;
 extern "gdi32" fn TextOutW(hdc: HDC, x: INT, y: INT, lpString: [*]const u16, c: INT) callconv(std.builtin.CallingConvention.winapi) BOOL;
 extern "gdi32" fn GetTextExtentPoint32W(hdc: HDC, lpString: [*]const u16, c: INT, lpSize: *GdiSize) callconv(std.builtin.CallingConvention.winapi) BOOL;
+extern "gdi32" fn GetTextMetricsW(hdc: HDC, lptm: *TEXTMETRICW) callconv(std.builtin.CallingConvention.winapi) BOOL;
 /// Replaces the current clipping region with the intersection of the current
 /// region and the specified rectangle. Returns NULLREGION/SIMPLEREGION/COMPLEXREGION or ERROR.
 extern "gdi32" fn IntersectClipRect(hdc: HDC, left: INT, top: INT, right: INT, bottom: INT) callconv(std.builtin.CallingConvention.winapi) INT;
@@ -483,6 +510,41 @@ pub const Renderer = struct {
         }
         const sc: usize = nearestScaleForPx(size_px);
         return @intCast(text.len * bfont.GLYPH_W * sc);
+    }
+
+    /// The y to pass to `drawTextSized` so the visual centre of the text (the
+    /// midpoint of its capital-glyph box) lands exactly on `center_y`.
+    ///
+    /// The capital box sits between the baseline and `baseline - capHeight`,
+    /// where `capHeight ≈ 0.70 * size_px`, so the visual centre is
+    /// `baseline - 0.35 * size_px` below the draw origin. GDI supplies the real
+    /// ascent for the cached sized font; without a GDI DC we approximate the
+    /// offset as `0.68 * size_px`.
+    pub fn textCenterY(self: *const Renderer, center_y: i32, size_px: f32, family: []const u8) i32 {
+        var offset: f32 = 0.68 * size_px;
+        if (self.gdi_dc != null) {
+            if (self.getSizedFont(size_px, family)) |hf| {
+                const dc = self.gdi_dc.?;
+                _ = SelectObject(@constCast(dc), @ptrCast(@constCast(hf)));
+                var tm: TEXTMETRICW = undefined;
+                if (GetTextMetricsW(@constCast(dc), &tm) != 0) {
+                    // The font is created at physical size; convert back to logical.
+                    const ascent_phys: f32 = @floatFromInt(tm.tmAscent);
+                    const ascent_logical: f32 =
+                        if (self.dpi_scale > 1.0) ascent_phys / self.dpi_scale else ascent_phys;
+                    offset = ascent_logical - 0.35 * size_px;
+                }
+            }
+        }
+        return center_y - @as(i32, @intFromFloat(@round(offset)));
+    }
+
+    /// Draw `text` horizontally AND vertically centred inside `rect`.
+    pub fn drawTextCentered(self: *Renderer, text: []const u8, rect: Rect, color: Color, size_px: f32, family: []const u8) void {
+        const w = self.textWidthSized(text, size_px, family);
+        const x = rect.x + @as(i32, @intCast((rect.width -| w) / 2));
+        const y = self.textCenterY(rect.y + @as(i32, @intCast(rect.height / 2)), size_px, family);
+        self.drawTextSized(text, x, y, color, size_px, family);
     }
 
     /// Measure an icon glyph's width in LOGICAL pixels using the icon font.
@@ -1165,4 +1227,22 @@ test "drawShadow: invisible or transparent shadow is a no-op" {
     r.drawShadow(rect, Corners.uniform(2), .{ .visible = false, .color = Color.rgba(0, 0, 0, 200) });
     r.drawShadow(rect, Corners.uniform(2), .{ .color = Color.rgba(0, 0, 0, 0) });
     for (buf) |p| try testing.expectEqual(@as(u32, 0xFFFFFF), p);
+}
+
+test "text centering is analysed" {
+    const W = 16;
+    const H = 16;
+    var buf: [W * H]u32 = undefined;
+    var r = Renderer.init(&buf, W, H);
+    r.clear(Color.black);
+
+    // No GDI DC in tests → fallback offset = round(0.68 * size_px).
+    // For size 14 that is round(9.52) = 10, so the draw origin is 90.
+    const cy = r.textCenterY(100, 14, "");
+    try testing.expect(cy < 100);
+    try testing.expectEqual(@as(i32, 100 - 10), cy);
+
+    // drawTextCentered must run end-to-end through the bitmap fallback path.
+    r.drawTextCentered("Hi", Rect.init(0, 0, W, H), Color.white, 14, "");
+    try testing.expect(r.textWidthSized("Hi", 14, "") > 0);
 }

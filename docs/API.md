@@ -201,6 +201,11 @@ r.textWidth(text: []const u8) u32
 r.textWidthScaled(text: []const u8, scale: u8) u32
 r.textWidthSized(text: []const u8, size_px: f32, family: []const u8) u32
     // measure at arbitrary size/family; returns LOGICAL pixels
+r.textCenterY(center_y: i32, size_px: f32, family: []const u8) i32
+    // the y to pass to drawTextSized so the visual centre of the text
+    // (midpoint of its capital-glyph box) lands exactly on center_y
+r.drawTextCentered(text: []const u8, rect: Rect, color: Color, size_px: f32, family: []const u8)
+    // draw text horizontally AND vertically centred inside rect
 r.drawImage(image: Image, dst: Rect) void     // nearest-neighbor scale blit
 r.drawScrollbar(rect: Rect, thumb: Rect, theme: Theme) void
 
