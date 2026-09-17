@@ -1,13 +1,13 @@
-// Windows UI Automation provider.
+﻿// Windows UI Automation provider.
 // Implements IRawElementProviderSimple + Fragment + FragmentRoot via COM vtables.
 // UIAutomationCore.dll is loaded dynamically so the app degrades gracefully
 // on systems where it is missing (very old Windows).
 //
 // Action patterns added:
-//   IInvokeProvider   — button roles  (Invoke -> invoke_fn callback)
-//   IToggleProvider   — checkbox roles (Toggle -> toggle_fn callback)
-//   IValueProvider    — text_field, text_area, slider roles (read value / SetValue stub)
-//   IRangeValueProvider — slider, progress_bar roles (Value/Min/Max properties)
+//   IInvokeProvider   â€” button roles  (Invoke -> invoke_fn callback)
+//   IToggleProvider   â€” checkbox roles (Toggle -> toggle_fn callback)
+//   IValueProvider    â€” text_field, text_area, slider roles (read value / SetValue stub)
+//   IRangeValueProvider â€” slider, progress_bar roles (Value/Min/Max properties)
 
 const std    = @import("std");
 const builtin = @import("builtin");
@@ -20,7 +20,7 @@ comptime {
 pub const AccessNode = node_mod.AccessNode;
 const Role = node_mod.Role;
 
-// ── Win32 primitive types ─────────────────────────────────────────────────────
+// â”€â”€ Win32 primitive types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const HWND    = *anyopaque;
 const BOOL    = i32;
@@ -38,7 +38,7 @@ const winapi = std.builtin.CallingConvention.winapi;
 const S_OK:          HRESULT = 0;
 const E_NOINTERFACE: HRESULT = @as(HRESULT, @bitCast(@as(u32, 0x80004002)));
 
-// ── GUID ─────────────────────────────────────────────────────────────────────
+// â”€â”€ GUID â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const GUID = extern struct {
     Data1: u32,
@@ -68,8 +68,8 @@ const IID_IRawElementProviderFragmentRoot = GUID{
     .Data4 = .{ 0x86, 0xCB, 0xDE, 0x3C, 0x75, 0x59, 0x9B, 0x58 },
 };
 const IID_IInvokeProvider = GUID{
-    .Data1 = 0x54FCB508, .Data2 = 0xA951, .Data3 = 0x4836,
-    .Data4 = .{ 0xA9, 0xD5, 0xB9, 0x9E, 0x04, 0xC9, 0x9A, 0x82 },
+    .Data1 = 0x54FCB24B, .Data2 = 0xE18E, .Data3 = 0x47A2,
+    .Data4 = .{ 0xB4, 0xD3, 0xEC, 0xCB, 0xE7, 0x75, 0x99, 0xA2 },
 };
 const IID_IToggleProvider = GUID{
     .Data1 = 0x56D00BD0, .Data2 = 0xC4F4, .Data3 = 0x4C6C,
@@ -84,7 +84,7 @@ const IID_IRangeValueProvider = GUID{
     .Data4 = .{ 0xAF, 0xE1, 0x2B, 0xE7, 0x27, 0x4B, 0x3D, 0x33 },
 };
 
-// ── VARIANT ──────────────────────────────────────────────────────────────────
+// â”€â”€ VARIANT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const VT_EMPTY: u16 = 0;
 const VT_I4:    u16 = 3;
@@ -120,7 +120,7 @@ const VARIANT = extern struct {
     }
 };
 
-// ── Simple spinlock (std.atomic.Mutex is non-blocking; wrap it) ───────────────
+// â”€â”€ Simple spinlock (std.atomic.Mutex is non-blocking; wrap it) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SpinLock = struct {
     inner: std.atomic.Mutex = .unlocked,
@@ -133,7 +133,7 @@ const SpinLock = struct {
     }
 };
 
-// ── UiaRect ──────────────────────────────────────────────────────────────────
+// â”€â”€ UiaRect â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const UiaRect = extern struct {
     left:   DOUBLE,
@@ -142,11 +142,11 @@ const UiaRect = extern struct {
     height: DOUBLE,
 };
 
-// ── SAFEARRAY (opaque — created only via OLE API) ────────────────────────────
+// â”€â”€ SAFEARRAY (opaque â€” created only via OLE API) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SAFEARRAY = opaque {};
 
-// ── Win32 extern declarations ─────────────────────────────────────────────────
+// â”€â”€ Win32 extern declarations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const POINT = extern struct { x: LONG, y: LONG };
 
@@ -160,11 +160,11 @@ extern "user32"   fn ClientToScreen(hWnd: HWND, lpPoint: *POINT) callconv(winapi
 extern "kernel32" fn LoadLibraryW(lpLibFileName: [*:0]const u16) callconv(winapi) ?*anyopaque;
 extern "kernel32" fn GetProcAddress(hModule: *anyopaque, lpProcName: [*:0]const u8) callconv(winapi) ?*anyopaque;
 
-// ── UIAutomationCore — loaded at runtime ─────────────────────────────────────
+// â”€â”€ UIAutomationCore â€” loaded at runtime â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const UiaReturnFn = *const fn (HWND, WPARAM, LPARAM, *anyopaque) callconv(winapi) LRESULT;
 const UiaHostFn   = *const fn (HWND, *?*anyopaque) callconv(winapi) HRESULT;
-/// UiaRaiseAutomationEvent(pProvider, id) — fires a UIA automation event.
+/// UiaRaiseAutomationEvent(pProvider, id) â€” fires a UIA automation event.
 /// pProvider must be an IRawElementProviderSimple*.
 const UiaRaiseEventFn = *const fn (*anyopaque, i32) callconv(winapi) HRESULT;
 
@@ -188,7 +188,7 @@ pub fn loadUiaFunctions() void {
         g_UiaRaiseEvent = @ptrCast(e);
 }
 
-// ── UIA numeric constants ─────────────────────────────────────────────────────
+// â”€â”€ UIA numeric constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const NavigateDirection_Parent          : i32 = 0;
 const NavigateDirection_NextSibling     : i32 = 1;
@@ -241,7 +241,7 @@ const ToggleState_Indeterminate : i32 = 2;
 
 const UiaAppendRuntimeId: i32 = 3;
 
-// ── COM vtable structs ────────────────────────────────────────────────────────
+// â”€â”€ COM vtable structs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SimpleVtbl = extern struct {
     QueryInterface:             *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
@@ -273,7 +273,7 @@ const RootVtbl = extern struct {
     GetFocus:                 *const fn (*anyopaque, *?*anyopaque) callconv(winapi) HRESULT,
 };
 
-// ── Action pattern vtable structs ─────────────────────────────────────────────
+// â”€â”€ Action pattern vtable structs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // IInvokeProvider (IID {54FCB508-A951-4836-A9D5-B99E04C99A82})
 const InvokeVtbl = extern struct {
@@ -316,7 +316,7 @@ const RangeValueVtbl = extern struct {
     get_SmallChange: *const fn (*anyopaque, *f64) callconv(winapi) HRESULT,
 };
 
-// Sub-interface "face" types — each is just a vtable pointer.
+// Sub-interface "face" types â€” each is just a vtable pointer.
 const SimpleFace      = extern struct { vtbl: *const SimpleVtbl };
 const FragmentFace    = extern struct { vtbl: *const FragmentVtbl };
 const RootFace        = extern struct { vtbl: *const RootVtbl };
@@ -325,7 +325,7 @@ const ToggleFace      = extern struct { vtbl: *const ToggleVtbl };
 const ValueFace       = extern struct { vtbl: *const ValueVtbl };
 const RangeValueFace  = extern struct { vtbl: *const RangeValueVtbl };
 
-// ── BSTR helper ───────────────────────────────────────────────────────────────
+// â”€â”€ BSTR helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn allocBstr(utf8: []const u8) ?*u16 {
     var buf: [512]u16 = undefined;
@@ -334,7 +334,7 @@ fn allocBstr(utf8: []const u8) ?*u16 {
     return SysAllocStringLen(buf[0..len].ptr, @intCast(len));
 }
 
-// ── UIA control-type mapper ───────────────────────────────────────────────────
+// â”€â”€ UIA control-type mapper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn controlType(role: Role) i32 {
     return switch (role) {
@@ -375,7 +375,7 @@ fn roleSupportsRangeValue(role: Role)  bool {
     return role == .slider or role == .progress_bar;
 }
 
-// ── screenBounds — convert logical client rect to screen physical pixels ──────
+// â”€â”€ screenBounds â€” convert logical client rect to screen physical pixels â”€â”€â”€â”€â”€â”€
 
 fn screenBounds(hwnd: HWND, bounds: Rect, dpi: f32) UiaRect {
     const px = @as(LONG, @intFromFloat(@round(@as(f32, @floatFromInt(bounds.x)) * dpi)));
@@ -396,7 +396,7 @@ fn screenBounds(hwnd: HWND, bounds: Rect, dpi: f32) UiaRect {
 
 const Rect = @import("../../layout/geometry.zig").Rect;
 
-// ── makeRuntimeId ─────────────────────────────────────────────────────────────
+// â”€â”€ makeRuntimeId â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn makeRuntimeId(index: u32) ?*SAFEARRAY {
     const sa = SafeArrayCreateVector(3, 0, 2) orelse return null; // VT_I4 = 3
@@ -411,10 +411,10 @@ fn makeRuntimeId(index: u32) ?*SAFEARRAY {
     return sa;
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Forward declaration — WidgetProvider references UiaTree, UiaTree references
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// Forward declaration â€” WidgetProvider references UiaTree, UiaTree references
 // WindowProvider.  Both reference each other via pointer only.
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 pub const UiaTree = struct {
     alloc:            std.mem.Allocator,
@@ -457,7 +457,7 @@ pub const UiaTree = struct {
     }
 
     pub fn update(self: *UiaTree, nodes: []const AccessNode) void {
-        // Skip rebuild when nothing changed — avoids N allocs/frees every frame.
+        // Skip rebuild when nothing changed â€” avoids N allocs/frees every frame.
         // NOTE: AccessNode now contains function pointers; pointer equality is
         // sufficient for the change-detect heuristic.
         if (nodes.len == self.snapshot_len and
@@ -510,14 +510,14 @@ pub const UiaTree = struct {
     }
 };
 
-// ══════════════════════════════════════════════════════════════════════════════
-// WidgetProvider — IRawElementProviderSimple + IRawElementProviderFragment
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// WidgetProvider â€” IRawElementProviderSimple + IRawElementProviderFragment
 //                + IInvokeProvider + IToggleProvider + IValueProvider
 //                + IRangeValueProvider
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 pub const WidgetProvider = struct {
-    simple:       SimpleFace,     // offset 0 — canonical IUnknown
+    simple:       SimpleFace,     // offset 0 â€” canonical IUnknown
     fragment:     FragmentFace,   // offset 8
     invoke_face:  InvokeFace,     // offset 16
     toggle_face:  ToggleFace,     // offset 24
@@ -531,7 +531,7 @@ pub const WidgetProvider = struct {
     hwnd:      HWND,
     dpi_scale: f32,
 
-    // ── Struct recovery from sub-interface pointer ────────────────────────────
+    // â”€â”€ Struct recovery from sub-interface pointer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn fromSimple(p: *anyopaque) *WidgetProvider {
         return @fieldParentPtr("simple", @as(*SimpleFace, @ptrCast(@alignCast(p))));
@@ -552,6 +552,30 @@ pub const WidgetProvider = struct {
         return @fieldParentPtr("rngval_face", @as(*RangeValueFace, @ptrCast(@alignCast(p))));
     }
 
+    /// COM identity for a sub-interface face.
+    ///
+    /// `QueryInterface(IID_IUnknown)` and `QueryInterface(<own iid>)` must both
+    /// return *this* face, not the canonical Simple face. UIA calls
+    /// `GetPatternProvider`, then QIs the returned pointer for IUnknown and for
+    /// the pattern IID; if IUnknown resolves to the Simple face, the client is
+    /// left holding a vtable without `Invoke`/`Toggle`/`Value` and silently
+    /// reports the pattern as unsupported.
+    fn faceQI(
+        p: *anyopaque,
+        own_iid: *const GUID,
+        simple: *SimpleFace,
+        self: *WidgetProvider,
+        riid: *const GUID,
+        ppv: *?*anyopaque,
+    ) callconv(winapi) HRESULT {
+        if (guidEql(riid, &IID_IUnknown) or guidEql(riid, own_iid)) {
+            ppv.* = p;
+            _ = self.addRefSelf();
+            return S_OK;
+        }
+        return sQI(@ptrCast(simple), riid, ppv);
+    }
+
     pub fn addRefSelf(self: *WidgetProvider) ULONG {
         return self.ref_count.fetchAdd(1, .monotonic) + 1;
     }
@@ -561,7 +585,7 @@ pub const WidgetProvider = struct {
         return prev - 1;
     }
 
-    // ── Simple vtable methods ─────────────────────────────────────────────────
+    // â”€â”€ Simple vtable methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn sQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromSimple(p);
@@ -648,12 +672,11 @@ pub const WidgetProvider = struct {
         ppv.* = null; return S_OK;
     }
 
-    // ── Fragment vtable methods ───────────────────────────────────────────────
+    // â”€â”€ Fragment vtable methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn fQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromFragment(p);
-        // Delegate to the Simple face which has the full QI logic.
-        return sQI(@ptrCast(&self.simple), riid, ppv);
+        return faceQI(p, &IID_IRawElementProviderFragment, &self.simple, self, riid, ppv);
     }
     fn fAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromFragment(p).addRefSelf(); }
     fn fRelease(p: *anyopaque) callconv(winapi) ULONG { return fromFragment(p).releaseSelf(); }
@@ -713,11 +736,11 @@ pub const WidgetProvider = struct {
         return S_OK;
     }
 
-    // ── IInvokeProvider vtable methods ────────────────────────────────────────
+    // â”€â”€ IInvokeProvider vtable methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn iQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromInvoke(p);
-        return sQI(@ptrCast(&self.simple), riid, ppv);
+        return faceQI(p, &IID_IInvokeProvider, &self.simple, self, riid, ppv);
     }
     fn iAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromInvoke(p).addRefSelf(); }
     fn iRelease(p: *anyopaque) callconv(winapi) ULONG { return fromInvoke(p).releaseSelf(); }
@@ -730,11 +753,11 @@ pub const WidgetProvider = struct {
         return S_OK;
     }
 
-    // ── IToggleProvider vtable methods ────────────────────────────────────────
+    // â”€â”€ IToggleProvider vtable methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn tQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromToggle(p);
-        return sQI(@ptrCast(&self.simple), riid, ppv);
+        return faceQI(p, &IID_IToggleProvider, &self.simple, self, riid, ppv);
     }
     fn tAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromToggle(p).addRefSelf(); }
     fn tRelease(p: *anyopaque) callconv(winapi) ULONG { return fromToggle(p).releaseSelf(); }
@@ -753,17 +776,17 @@ pub const WidgetProvider = struct {
         return S_OK;
     }
 
-    // ── IValueProvider vtable methods ─────────────────────────────────────────
+    // â”€â”€ IValueProvider vtable methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn vQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromValue(p);
-        return sQI(@ptrCast(&self.simple), riid, ppv);
+        return faceQI(p, &IID_IValueProvider, &self.simple, self, riid, ppv);
     }
     fn vAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromValue(p).addRefSelf(); }
     fn vRelease(p: *anyopaque) callconv(winapi) ULONG { return fromValue(p).releaseSelf(); }
 
     fn vSetValue(_: *anyopaque, _: ?*u16) callconv(winapi) HRESULT {
-        // Stub — no write-back mechanism yet; clients can read but not set.
+        // Stub â€” no write-back mechanism yet; clients can read but not set.
         return S_OK;
     }
 
@@ -779,17 +802,17 @@ pub const WidgetProvider = struct {
         return S_OK;
     }
 
-    // ── IRangeValueProvider vtable methods ────────────────────────────────────
+    // â”€â”€ IRangeValueProvider vtable methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn rvQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromRangeValue(p);
-        return sQI(@ptrCast(&self.simple), riid, ppv);
+        return faceQI(p, &IID_IRangeValueProvider, &self.simple, self, riid, ppv);
     }
     fn rvAddRef(p: *anyopaque) callconv(winapi) ULONG  { return fromRangeValue(p).addRefSelf(); }
     fn rvRelease(p: *anyopaque) callconv(winapi) ULONG { return fromRangeValue(p).releaseSelf(); }
 
     fn rvSetValue(_: *anyopaque, _: f64) callconv(winapi) HRESULT {
-        // Stub — no write-back mechanism yet.
+        // Stub â€” no write-back mechanism yet.
         return S_OK;
     }
 
@@ -819,7 +842,7 @@ pub const WidgetProvider = struct {
         pVal.* = 0.01; return S_OK;
     }
 
-    // ── Static vtable instances ───────────────────────────────────────────────
+    // â”€â”€ Static vtable instances â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     const s_simple_vtbl = SimpleVtbl{
         .QueryInterface             = sQI,
@@ -903,9 +926,9 @@ pub const WidgetProvider = struct {
     }
 };
 
-// ══════════════════════════════════════════════════════════════════════════════
-// WindowProvider — Simple + Fragment + FragmentRoot
-// ══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// WindowProvider â€” Simple + Fragment + FragmentRoot
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 pub const WindowProvider = struct {
     simple:    SimpleFace,   // offset 0
@@ -933,10 +956,10 @@ pub const WindowProvider = struct {
     }
     fn releaseSelf(self: *WindowProvider) ULONG {
         return self.ref_count.fetchSub(1, .monotonic) - 1;
-        // WindowProvider is owned by UiaTree — no heap free here
+        // WindowProvider is owned by UiaTree â€” no heap free here
     }
 
-    // ── Simple ───────────────────────────────────────────────────────────────
+    // â”€â”€ Simple â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn wsQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromSimple(p);
@@ -981,7 +1004,7 @@ pub const WindowProvider = struct {
         return S_OK;
     }
 
-    // ── Fragment ─────────────────────────────────────────────────────────────
+    // â”€â”€ Fragment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn wfQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromFragment(p);
@@ -1041,7 +1064,7 @@ pub const WindowProvider = struct {
         return S_OK;
     }
 
-    // ── Root ─────────────────────────────────────────────────────────────────
+    // â”€â”€ Root â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn wrQI(p: *anyopaque, riid: *const GUID, ppv: *?*anyopaque) callconv(winapi) HRESULT {
         const self = fromRoot(p);
@@ -1095,7 +1118,7 @@ pub const WindowProvider = struct {
         return S_OK;
     }
 
-    // ── Static vtable instances ───────────────────────────────────────────────
+    // â”€â”€ Static vtable instances â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     const s_simple_vtbl = SimpleVtbl{
         .QueryInterface             = wsQI,
@@ -1148,7 +1171,7 @@ pub const WindowProvider = struct {
     }
 };
 
-// ── Public helper — call from WM_GETOBJECT handler ────────────────────────────
+// â”€â”€ Public helper â€” call from WM_GETOBJECT handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 pub fn handleGetObject(
     tree: *UiaTree,
@@ -1163,4 +1186,43 @@ pub fn handleGetObject(
     if (lp != UIA_ROOT and lp != OBJID_CLIENT) return 0;
     const fn_ret = g_UiaReturn orelse return 0;
     return fn_ret(hwnd, wp, lp, tree.getWindowProvider());
+}
+
+// â”€â”€ Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+fn providerFor(alloc: std.mem.Allocator, role: Role, tree: *UiaTree) !*WidgetProvider {
+    const node = AccessNode{
+        .role = role,
+        .name = "test",
+        .bounds = Rect.init(0, 0, 10, 10),
+    };
+    return WidgetProvider.create(alloc, node, 0, tree, undefined, 1.0);
+}
+
+test "button role advertises the invoke pattern" {
+    const alloc = std.testing.allocator;
+    var tree: UiaTree = undefined;
+    const wp = try providerFor(alloc, .button, &tree);
+    defer _ = wp.releaseSelf();
+    var out: ?*anyopaque = null;
+    _ = WidgetProvider.sGetPatternProvider(@ptrCast(&wp.simple), UIA_InvokePatternId, &out);
+    try std.testing.expect(out != null);
+    if (out) |o| _ = WidgetProvider.iRelease(o);
+
+    // The client then queries the returned pointer for IID_IInvokeProvider.
+    var qi: ?*anyopaque = null;
+    _ = WidgetProvider.sQI(@ptrCast(&wp.simple), &IID_IInvokeProvider, &qi);
+    try std.testing.expect(qi != null);
+    if (qi) |q| _ = WidgetProvider.iRelease(q);
+}
+
+test "text_field role advertises the value pattern" {
+    const alloc = std.testing.allocator;
+    var tree: UiaTree = undefined;
+    const wp = try providerFor(alloc, .text_field, &tree);
+    defer _ = wp.releaseSelf();
+    var out: ?*anyopaque = null;
+    _ = WidgetProvider.sGetPatternProvider(@ptrCast(&wp.simple), UIA_ValuePatternId, &out);
+    try std.testing.expect(out != null);
+    if (out) |o| _ = WidgetProvider.vRelease(o);
 }

@@ -2,3 +2,7 @@
 zig-out/
 .claude/worktrees/
 build_err.txt
+
+# prove / validator generated state
+.prove/
+.validator/

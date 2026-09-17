@@ -91,3 +91,10 @@ pub const FileDialogOptions = file_dialog_mod.FileDialogOptions;
 pub const openFile    = file_dialog_mod.openFile;
 pub const saveFile    = file_dialog_mod.saveFile;
 pub const openFolder  = file_dialog_mod.openFolder;
+
+// Pull platform backend tests into the module test build.
+test {
+    if (@import("builtin").os.tag == .windows) {
+        _ = @import("platform/win32/uia.zig");
+    }
+}
