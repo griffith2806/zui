@@ -40,6 +40,31 @@ const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
     .{ .label = "New Widgets",  .page = .new_widgets,  .icon = "N" },
 };
 
+/// Context for a sidebar item's UIA Invoke action. The sidebar buttons are
+/// exposed to accessibility clients (and therefore to UI automation), so
+/// invoking one must actually navigate — otherwise the buttons advertise
+/// `Invoke` but do nothing.
+const NavInvokeCtx = struct {
+    page:   *Page,
+    dirty:  *bool,
+    target: Page,
+};
+
+fn navInvoke(ctx: *anyopaque) void {
+    const c: *NavInvokeCtx = @ptrCast(@alignCast(ctx));
+    c.page.* = c.target;
+    c.dirty.* = true;
+}
+
+/// Stable backing store for the Controls counter's accessible text. The UIA
+/// provider keeps the slice pointer, so it must outlive the node.
+var g_counter_text: [64]u8 = undefined;
+
+/// Set by widget action callbacks (invoke/toggle) so the accessibility tree is
+/// republished after state changes. A global avoids threading a pointer through
+/// every callback; the main loop folds it into `uia_dirty`.
+var g_uia_dirty: bool = false;
+
 // ── Animation demo data ──────────────────────────────────────────────────────
 const ANIM_COLORS = [_]zui.Color{
     ACCENT,
@@ -1035,6 +1060,12 @@ pub fn main(init: std.process.Init) !void {
     var nav_hover_t: [NAV_ITEMS.len]f32  = .{0.0}   ** NAV_ITEMS.len;
     var nav_hovered: [NAV_ITEMS.len]bool = .{false}  ** NAV_ITEMS.len;
 
+    // Sidebar UIA invoke targets. These point at `page`/`uia_dirty`, which live
+    // for the whole program, so the callbacks stay valid.
+    var nav_invoke_ctx: [NAV_ITEMS.len]NavInvokeCtx = undefined;
+    for (NAV_ITEMS, 0..) |item, i|
+        nav_invoke_ctx[i] = .{ .page = &page, .dirty = &uia_dirty, .target = item.page };
+
     // ScrollArea state for tall pages
     var about_scroll  = zui.ScrollArea{};
     var colors_scroll = zui.ScrollArea{};
@@ -1192,10 +1223,12 @@ pub fn main(init: std.process.Init) !void {
             app.present();
 
             // Publish widget positions to UIA only when something accessibility-
-            // relevant changed (page nav, clicks, key events) — not on every repaint.
-            if (uia_dirty) {
-                buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, &images, &data_binding, &file_dialogs, &new_widgets, about_expanded, &nav_rects, alloc);
+            // relevant changed (page nav, clicks, key events, widget actions) —
+            // not on every repaint.
+            if (uia_dirty or g_uia_dirty) {
+                buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, &images, &data_binding, &file_dialogs, &new_widgets, about_expanded, &nav_rects, &nav_invoke_ctx, alloc);
                 uia_dirty = false;
+                g_uia_dirty = false;
             }
         }
         app.capFps(60);
@@ -1219,19 +1252,23 @@ fn buildAccessibilityTree(
     new_widgets_st: *NewWidgetsState,
     about_expanded: bool,
     nav_rects:      []const zui.Rect,
+    nav_ctx:        []NavInvokeCtx,
     alloc:          std.mem.Allocator,
 ) void {
     var nodes: [128]zui.AccessNode = undefined;
     var n: usize = 0;
 
-    // Navigation sidebar items (always present)
+    // Navigation sidebar items (always present). Wire IInvokeProvider so UI
+    // automation and screen readers can actually switch pages.
     for (NAV_ITEMS, 0..) |item, i| {
         if (n >= nodes.len) break;
         nodes[n] = .{
-            .role   = .button,
-            .name   = item.label,
-            .bounds = nav_rects[i],
-            .state  = .{ .selected = item.page == page, .enabled = true },
+            .role      = .button,
+            .name      = item.label,
+            .bounds    = nav_rects[i],
+            .state     = .{ .selected = item.page == page, .enabled = true },
+            .invoke_fn = navInvoke,
+            .ctx       = @ptrCast(&nav_ctx[i]),
         };
         n += 1;
     }
@@ -1253,6 +1290,18 @@ fn buildAccessibilityTree(
 
     switch (page) {
         .controls => {
+            // Publish the counter so automation can verify that Increment/Reset
+            // actually changed observable state, not just that the button exists.
+            const ctr_txt = std.fmt.bufPrint(&g_counter_text, "Counter: {d}", .{controls.counter}) catch "Counter";
+            if (n < nodes.len) {
+                nodes[n] = .{
+                    .role   = .label,
+                    .name   = ctr_txt,
+                    .bounds = zui.Rect.init(lx, base + 404, 220, 24),
+                    .state  = .{ .enabled = true },
+                };
+                n += 1;
+            }
             if (n < nodes.len) { nodes[n] = controls.field_search.accessNode("Search", zui.Rect.init(lx, base + 40, 300, 34), alloc); n += 1; }
             if (n < nodes.len) { nodes[n] = controls.field_name.accessNode("Name", zui.Rect.init(lx, base + 100, 280, 34), alloc); n += 1; }
             // Buttons — wire IInvokeProvider callbacks so AT can activate them.
@@ -1261,6 +1310,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &controls.btn_inc;
                 nodes[n] = nd; n += 1;
@@ -1270,6 +1320,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &controls.btn_reset;
                 nodes[n] = nd; n += 1;
@@ -1279,6 +1330,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &controls.btn_theme;
                 nodes[n] = nd; n += 1;
@@ -1291,6 +1343,7 @@ fn buildAccessibilityTree(
                     const cb: *zui.Checkbox = @ptrCast(@alignCast(ctx));
                     cb.checked = !cb.checked;
                     cb.changed.emit(cb.checked);
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &controls.cb_notify;
                 nodes[n] = nd; n += 1;
@@ -1301,6 +1354,7 @@ fn buildAccessibilityTree(
                     const cb: *zui.Checkbox = @ptrCast(@alignCast(ctx));
                     cb.checked = !cb.checked;
                     cb.changed.emit(cb.checked);
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &controls.cb_compact;
                 nodes[n] = nd; n += 1;
@@ -1319,6 +1373,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &overlays.dialog_btn;
                 nodes[n] = nd; n += 1;
@@ -1328,6 +1383,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &overlays.menu_btn;
                 nodes[n] = nd; n += 1;
@@ -1341,6 +1397,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &animations.btn_play;
                 nodes[n] = nd; n += 1;
@@ -1350,6 +1407,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &animations.btn_rev;
                 nodes[n] = nd; n += 1;
@@ -1359,6 +1417,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &animations.btn_color;
                 nodes[n] = nd; n += 1;
@@ -1384,6 +1443,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &images.btn_load;
                 nodes[n] = nd; n += 1;
@@ -1393,6 +1453,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &images.btn_clear;
                 nodes[n] = nd; n += 1;
@@ -1404,6 +1465,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &data_binding.btn_inc;
                 nodes[n] = nd; n += 1;
@@ -1413,6 +1475,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &data_binding.btn_dec;
                 nodes[n] = nd; n += 1;
@@ -1422,6 +1485,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &data_binding.btn_reset;
                 nodes[n] = nd; n += 1;
@@ -1433,6 +1497,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &file_dialogs.btn_open;
                 nodes[n] = nd; n += 1;
@@ -1442,6 +1507,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &file_dialogs.btn_save;
                 nodes[n] = nd; n += 1;
@@ -1451,6 +1517,7 @@ fn buildAccessibilityTree(
                 nd.invoke_fn = struct { fn f(ctx: *anyopaque) void {
                     const btn: *zui.Button = @ptrCast(@alignCast(ctx));
                     btn.clicked.emit({});
+                    g_uia_dirty = true;
                 }}.f;
                 nd.ctx = &file_dialogs.btn_folder;
                 nodes[n] = nd; n += 1;
