@@ -1087,13 +1087,12 @@ pub fn main(init: std.process.Init) !void {
             got_event = true;
             switch (ev) {
                 .close     => app.window.should_close = true,
-                .key_press => |k| {
+                .key_press => {
+                    // Escape is handled by the focused widget (dialog/menu
+                    // dismiss, text-field blur). It must not quit the app: a
+                    // stray Escape should not close a gallery window, and
+                    // quitting mid-run breaks UI automation.
                     heavy_event = true;
-                    if (k.key == .escape and
-                        !overlays.dialog.visible and
-                        !overlays.menu.open and
-                        !inputs.dropdown.open)
-                        app.window.should_close = true;
                 },
                 .mouse_move => |m| {
                     for (nav_rects, 0..) |nr, i|
