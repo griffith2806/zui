@@ -682,6 +682,48 @@ pub const Renderer = struct {
         }
     }
 
+    // ── Shadow (M23c) ─────────────────────────────────────────────────────────
+
+    /// Number of concentric layers used to approximate a Gaussian falloff.
+    pub const SHADOW_LAYERS: u32 = 6;
+
+    /// Draw a Figma-style drop or inner shadow for `rect`. The caller draws the
+    /// actual shape on top afterwards.
+    ///
+    /// Drop shadows are approximated with `SHADOW_LAYERS` concentric rounded
+    /// rects translated by the offset and expanded outward; the per-layer alpha
+    /// falls off so the composite over the shape edge sums to the shadow colour
+    /// alpha. Inner shadows are best-effort: the same rings are drawn clipped to
+    /// `rect` with the offset inverted, so the darkening hugs the inside edges
+    /// (not a true inner-shadow cut-out).
+    pub fn drawShadow(self: *Renderer, rect: Rect, corners: Corners, shadow: paint.Shadow) void {
+        if (!shadow.visible or shadow.color.a == 0) return;
+        const inner = shadow.kind == .inner;
+        const ox = if (inner) -shadow.offset_x else shadow.offset_x;
+        const oy = if (inner) -shadow.offset_y else shadow.offset_y;
+        if (inner) {
+            self.setClip(rect);
+            defer self.clearClip();
+        }
+        self.drawShadowRings(rect, corners, ox, oy, shadow);
+    }
+
+    fn drawShadowRings(self: *Renderer, rect: Rect, corners: Corners, ox: f32, oy: f32, shadow: paint.Shadow) void {
+        const layers = SHADOW_LAYERS;
+        var i: u32 = 0;
+        while (i < layers) : (i += 1) {
+            const expansion = shadow.spread +
+                shadow.blur * @as(f32, @floatFromInt(i + 1)) / @as(f32, @floatFromInt(layers));
+            const alpha = shadowLayerAlpha(shadow.color.a, layers, i);
+            if (alpha == 0) continue;
+            self.fillCorners(
+                shadowLayerRect(rect, ox, oy, expansion),
+                shadowLayerCorners(corners, expansion),
+                shadowLayerColor(shadow.color, alpha),
+            );
+        }
+    }
+
     /// Fill a rounded rect (per-corner radii) with a linear gradient.
     /// `angle_deg` 0 = left→right, 90 = top→bottom. Stops are sampled in order.
     pub fn fillLinearGradient(
@@ -911,6 +953,46 @@ fn sampleGradient(stops: []const GradientStop, t_in: f32) Color {
     return paint.sampleStops(stops, t_in);
 }
 
+// ── Shadow layer helpers (shared shape across backends) ───────────────────────
+
+/// Per-layer alpha so the composite of all `layers` sums to `base_a`. The
+/// innermost layer (i = 0) is strongest; clamped to 1..255.
+fn shadowLayerAlpha(base_a: u8, layers: u32, i: u32) u8 {
+    const num: u32 = @as(u32, base_a) * 2 * (layers - i);
+    const den: u32 = layers * (layers + 1);
+    return @intCast(std.math.clamp(num / den, 1, 255));
+}
+
+/// `rect` translated by `(ox, oy)` and expanded outward by `e` on every side.
+fn shadowLayerRect(rect: Rect, ox: f32, oy: f32, e: f32) Rect {
+    const x0: f32 = @round(@as(f32, @floatFromInt(rect.x)) + ox - e);
+    const y0: f32 = @round(@as(f32, @floatFromInt(rect.y)) + oy - e);
+    const x1: f32 = @round(@as(f32, @floatFromInt(rect.right())) + ox + e);
+    const y1: f32 = @round(@as(f32, @floatFromInt(rect.bottom())) + oy + e);
+    return Rect.init(
+        @intFromFloat(x0),
+        @intFromFloat(y0),
+        @intFromFloat(@max(0.0, x1 - x0)),
+        @intFromFloat(@max(0.0, y1 - y0)),
+    );
+}
+
+/// Corner radii grown by the same expansion as the layer rect.
+fn shadowLayerCorners(corners: Corners, e: f32) Corners {
+    return .{
+        .tl = @max(0, corners.tl + e),
+        .tr = @max(0, corners.tr + e),
+        .br = @max(0, corners.br + e),
+        .bl = @max(0, corners.bl + e),
+        .smoothing = corners.smoothing,
+    };
+}
+
+/// The shadow colour at a per-layer alpha.
+fn shadowLayerColor(color: Color, a: u8) Color {
+    return .{ .r = color.r, .g = color.g, .b = color.b, .a = a };
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 const testing = std.testing;
@@ -1044,5 +1126,43 @@ test "drawTextSized / textWidthSized bitmap fallback" {
     try testing.expect(r.textWidthSized("", 16, "") == 0);
     // Nearest-rung mapping: 16px → scale 1, 40px → scale 3.
     try testing.expectEqual(@as(u32, 2 * 8 * 1), r.textWidthSized("Hi", 16, ""));
-    try testing.expectEqual(@as(u32, 2 * 8 * 3), r.textWidthSized("Hi", 40, ""));
+    try testing.expectEqual(@as(u32, 2 * 8 * 3), r.textWidthSized("Hi", 40, "Inter"));
+}
+
+test "drawShadow: drop shadow darkens area below the shape" {
+    const W = 32;
+    const H = 32;
+    var buf: [W * H]u32 = undefined;
+    var r = Renderer.init(&buf, W, H);
+    r.clear(Color.white);
+
+    const rect = Rect.init(8, 8, 16, 16);
+    const sh = paint.Shadow{
+        .kind = .drop,
+        .color = Color.rgba(0, 0, 0, 200),
+        .offset_x = 0,
+        .offset_y = 4,
+        .blur = 8,
+        .spread = 0,
+    };
+    r.drawShadow(rect, Corners.uniform(4), sh);
+
+    // Just below the shape's bottom edge (y = 24), inside the offset shadow.
+    const under = testPixel(&buf, W, 16, 26);
+    const rr: u32 = (under >> 16) & 0xFF;
+    try testing.expect(rr < 255);
+    // The far corner is outside every layer and stays untouched.
+    try testing.expectEqual(@as(u32, 0xFFFFFF), testPixel(&buf, W, 0, 0));
+}
+
+test "drawShadow: invisible or transparent shadow is a no-op" {
+    const W = 8;
+    const H = 8;
+    var buf: [W * H]u32 = undefined;
+    var r = Renderer.init(&buf, W, H);
+    r.clear(Color.white);
+    const rect = Rect.init(1, 1, 6, 6);
+    r.drawShadow(rect, Corners.uniform(2), .{ .visible = false, .color = Color.rgba(0, 0, 0, 200) });
+    r.drawShadow(rect, Corners.uniform(2), .{ .color = Color.rgba(0, 0, 0, 0) });
+    for (buf) |p| try testing.expectEqual(@as(u32, 0xFFFFFF), p);
 }

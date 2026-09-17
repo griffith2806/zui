@@ -1571,6 +1571,43 @@ pub const Renderer = struct {
         self.fillRoundRect(rect, @intFromFloat(@round(r)), color);
     }
 
+    /// Draw a Figma-style drop or inner shadow for `rect`. The caller draws the
+    /// actual shape on top afterwards.
+    ///
+    /// Drop shadows are approximated with `SHADOW_LAYERS` concentric rounded
+    /// rects translated by the offset and expanded outward; the per-layer alpha
+    /// falls off so the composite over the shape edge sums to the shadow colour
+    /// alpha. Inner shadows are best-effort: the same rings are drawn clipped to
+    /// `rect` with the offset inverted (clip support in this backend is a
+    /// follow-up, so it currently matches the unclipped approximation).
+    pub fn drawShadow(self: *Renderer, rect: Rect, corners: paint.Corners, shadow: paint.Shadow) void {
+        if (!shadow.visible or shadow.color.a == 0) return;
+        const inner = shadow.kind == .inner;
+        const ox = if (inner) -shadow.offset_x else shadow.offset_x;
+        const oy = if (inner) -shadow.offset_y else shadow.offset_y;
+        if (inner) {
+            self.setClip(rect);
+            defer self.clearClip();
+        }
+        self.drawShadowRings(rect, corners, ox, oy, shadow);
+    }
+
+    fn drawShadowRings(self: *Renderer, rect: Rect, corners: paint.Corners, ox: f32, oy: f32, shadow: paint.Shadow) void {
+        const layers = SHADOW_LAYERS;
+        var i: u32 = 0;
+        while (i < layers) : (i += 1) {
+            const expansion = shadow.spread +
+                shadow.blur * @as(f32, @floatFromInt(i + 1)) / @as(f32, @floatFromInt(layers));
+            const alpha = shadowLayerAlpha(shadow.color.a, layers, i);
+            if (alpha == 0) continue;
+            self.fillCorners(
+                shadowLayerRect(rect, ox, oy, expansion),
+                shadowLayerCorners(corners, expansion),
+                shadowLayerColor(shadow.color, alpha),
+            );
+        }
+    }
+
     /// Linear gradient fill, approximated with a solid midpoint colour.
     pub fn fillLinearGradient(
         self: *Renderer,
@@ -1754,10 +1791,57 @@ fn nearestScaleForPx(size_px: f32) u32 {
     return @intFromFloat(r);
 }
 
+// ── Shadow layer helpers (shared shape across backends) ───────────────────────
+
+/// Number of concentric layers used to approximate a Gaussian falloff.
+pub const SHADOW_LAYERS: u32 = 6;
+
+/// Per-layer alpha so the composite of all `layers` sums to `base_a`. The
+/// innermost layer (i = 0) is strongest; clamped to 1..255.
+fn shadowLayerAlpha(base_a: u8, layers: u32, i: u32) u8 {
+    const num: u32 = @as(u32, base_a) * 2 * (layers - i);
+    const den: u32 = layers * (layers + 1);
+    return @intCast(std.math.clamp(num / den, 1, 255));
+}
+
+/// `rect` translated by `(ox, oy)` and expanded outward by `e` on every side.
+fn shadowLayerRect(rect: Rect, ox: f32, oy: f32, e: f32) Rect {
+    const x0: f32 = @round(@as(f32, @floatFromInt(rect.x)) + ox - e);
+    const y0: f32 = @round(@as(f32, @floatFromInt(rect.y)) + oy - e);
+    const x1: f32 = @round(@as(f32, @floatFromInt(rect.right())) + ox + e);
+    const y1: f32 = @round(@as(f32, @floatFromInt(rect.bottom())) + oy + e);
+    return Rect.init(
+        @intFromFloat(x0),
+        @intFromFloat(y0),
+        @intFromFloat(@max(0.0, x1 - x0)),
+        @intFromFloat(@max(0.0, y1 - y0)),
+    );
+}
+
+/// Corner radii grown by the same expansion as the layer rect.
+fn shadowLayerCorners(corners: paint.Corners, e: f32) paint.Corners {
+    return .{
+        .tl = @max(0, corners.tl + e),
+        .tr = @max(0, corners.tr + e),
+        .br = @max(0, corners.br + e),
+        .bl = @max(0, corners.bl + e),
+        .smoothing = corners.smoothing,
+    };
+}
+
+/// The shadow colour at a per-layer alpha.
+fn shadowLayerColor(color: Color, a: u8) Color {
+    return .{ .r = color.r, .g = color.g, .b = color.b, .a = a };
+}
+
 // Zig only analyses a function body when it is referenced. Referencing the new
 // text methods forces their bodies to be type-checked when this backend is built.
 
 test "drawTextSized / textWidthSized are analysed" {
     _ = &Renderer.drawTextSized;
     _ = &Renderer.textWidthSized;
+}
+
+test "drawShadow is analysed" {
+    _ = &Renderer.drawShadow;
 }

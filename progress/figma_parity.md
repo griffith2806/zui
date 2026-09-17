@@ -52,6 +52,21 @@ plumbing). Software + OpenGL parity is a follow-up, not the primary target.
   - NOTE: `-Dbackend=opengl` is broken *before* this change (Renderer lacks
     `drawImage` / `setClip` / `clearClip` / `clearTextQueue` used by main +
     widgets). Pre-existing gap, not introduced here.
+- [ M23c ] Drop/inner shadow primitive on every backend:
+  `drawShadow(rect, corners, shadow)` added to software, D2D, OpenGL, Vulkan.
+  Layered approximation of a Gaussian falloff: 6 concentric rounded rects
+  translated by `(offset_x, offset_y)` and expanded outward by
+  `spread + blur * (i+1) / 6`; per-layer alpha is
+  `color.a * 2 * (6 - i) / (6 * 7)` clamped to 1..255, so the six layers
+  composite to the shadow colour alpha with the innermost strongest. Drop draws
+  unclipped; inner draws the same rings clipped to `rect` with the offset
+  inverted (best-effort approximation, documented in each method). Software uses
+  the real alpha `blendPixel` path and a pixel test proving the area below the
+  shape darkens; D2D fills an `ID2D1PathGeometry` per layer via `setBrushColor`;
+  OpenGL/Vulkan delegate to `fillCorners`. `zig build test`,
+  `zig build test -Dbackend=d2d`, `zig build -Dbackend=d2d` all green. OpenGL /
+  Vulkan exe builds still fail on the pre-existing missing methods noted below;
+  their test builds (which reference `drawShadow`) compile clean.
 - `zig build test` clean; live UIA suite 40/40 green.
 
 - [ M23b2 ] D2D exact surface (`src/graphics/d2d/renderer.zig`, +259 lines):
@@ -96,7 +111,8 @@ plumbing). Software + OpenGL parity is a follow-up, not the primary target.
 - (none)
 
 ### Up Next
-- M23c Effects: drop/inner shadow, layer blur, background blur (D2D effects)
+- M23c Effects: layer blur, background blur (D2D effects); true Gaussian drop
+  shadow (D2D `ID2D1Effect` shadow) to replace the layered approximation
 - M23d Typography: Font line_height + letter_spacing → DirectWrite layout
 - M23e Transforms: rotation/scale/flip in renderer + widget transform
 - M23g Blend modes + arbitrary-shape masks
