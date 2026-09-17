@@ -30,6 +30,7 @@ const std   = @import("std");
 const Color = @import("../../style/color.zig").Color;
 const Rect  = @import("../../layout/geometry.zig").Rect;
 const Image = @import("../image.zig").Image;
+const paint = @import("../../style/paint.zig");
 
 // ── Vulkan result codes ───────────────────────────────────────────────────────
 
@@ -1559,6 +1560,29 @@ pub const Renderer = struct {
         self.draw_cmd_count += 1;
     }
 
+    /// Per-corner rounded rect — approximated as a uniform round rect using the
+    /// largest corner radius until the SDF pipeline supports per-corner arcs.
+    pub fn fillCorners(self: *Renderer, rect: Rect, corners: paint.Corners, color: Color) void {
+        const r = corners.maxRadius();
+        if (r <= 0) {
+            self.fillRect(rect, color);
+            return;
+        }
+        self.fillRoundRect(rect, @intFromFloat(@round(r)), color);
+    }
+
+    /// Linear gradient fill, approximated with a solid midpoint colour.
+    pub fn fillLinearGradient(
+        self: *Renderer,
+        rect: Rect,
+        corners: paint.Corners,
+        stops: []const paint.GradientStop,
+        angle_deg: f32,
+    ) void {
+        _ = angle_deg;
+        self.fillCorners(rect, corners, paint.sampleStops(stops, 0.5));
+    }
+
     // ── present ───────────────────────────────────────────────────────────────
     // Submits all queued draw commands for this frame.
 
@@ -1679,6 +1703,18 @@ pub const Renderer = struct {
         _ = self; _ = text; _ = scale; return 0;
     }
 
+    /// Arbitrary-size text is approximated by the nearest fixed ladder rung.
+    pub fn drawTextSized(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, size_px: f32, family: []const u8) void {
+        _ = family;
+        self.drawTextScaled(text, x, y, color, nearestScaleForPx(size_px));
+    }
+
+    /// Arbitrary-size measurement is approximated by the nearest ladder rung.
+    pub fn textWidthSized(self: *const Renderer, text: []const u8, size_px: f32, family: []const u8) u32 {
+        _ = family;
+        return self.textWidthScaled(text, nearestScaleForPx(size_px));
+    }
+
     pub fn clearTextQueue(self: *Renderer) void {
         _ = self;
     }
@@ -1708,4 +1744,20 @@ pub const Renderer = struct {
 
 inline fn makeVersion(major: u32, minor: u32, patch: u32) u32 {
     return (major << 22) | (minor << 12) | patch;
+}
+
+/// Map an arbitrary logical pixel size onto the nearest fixed ladder rung (1..6).
+fn nearestScaleForPx(size_px: f32) u32 {
+    const r = @round(size_px / 14.0);
+    if (!(r > 1.0)) return 1;
+    if (r > 6.0) return 6;
+    return @intFromFloat(r);
+}
+
+// Zig only analyses a function body when it is referenced. Referencing the new
+// text methods forces their bodies to be type-checked when this backend is built.
+
+test "drawTextSized / textWidthSized are analysed" {
+    _ = &Renderer.drawTextSized;
+    _ = &Renderer.textWidthSized;
 }

@@ -1,6 +1,7 @@
 const std   = @import("std");
 const Color = @import("../../style/color.zig").Color;
 const Rect  = @import("../../layout/geometry.zig").Rect;
+const paint = @import("../../style/paint.zig");
 const gl    = @import("gl.zig");
 const atlas = @import("font_atlas.zig");
 const GlContext = @import("../../platform/win32/gl_context.zig").GlContext;
@@ -260,6 +261,18 @@ pub const Renderer = struct {
         return @intCast(text.len * atlas.GLYPH_W * scale);
     }
 
+    /// Arbitrary-size text is approximated by the nearest fixed ladder rung.
+    pub fn drawTextSized(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, size_px: f32, family: []const u8) void {
+        _ = family;
+        self.drawTextScaled(text, x, y, color, nearestScaleForPx(size_px));
+    }
+
+    /// Arbitrary-size measurement is approximated by the nearest ladder rung.
+    pub fn textWidthSized(self: *const Renderer, text: []const u8, size_px: f32, family: []const u8) u32 {
+        _ = family;
+        return self.textWidthScaled(text, nearestScaleForPx(size_px));
+    }
+
     /// Draw a filled rounded rectangle using an SDF fragment shader.
     /// Flushes the batch first so mixing with fillRect is safe.
     pub fn fillRoundRect(self: *Renderer, rect: Rect, radius: u32, color: Color) void {
@@ -291,6 +304,29 @@ pub const Renderer = struct {
         // Restore main batch program
         g.useProgram(self.prog);
         g.uniform2f(self.u_screen, @floatFromInt(self.width), @floatFromInt(self.height));
+    }
+
+    /// Per-corner rounded rect. The SDF shader only supports a uniform radius,
+    /// so this approximates with the largest corner radius.
+    pub fn fillCorners(self: *Renderer, rect: Rect, corners: paint.Corners, color: Color) void {
+        const r = corners.maxRadius();
+        if (r <= 0) {
+            self.fillRect(rect, color);
+            return;
+        }
+        self.fillRoundRect(rect, @intFromFloat(@round(r)), color);
+    }
+
+    /// Linear gradient fill, approximated with a solid midpoint colour.
+    pub fn fillLinearGradient(
+        self: *Renderer,
+        rect: Rect,
+        corners: paint.Corners,
+        stops: []const paint.GradientStop,
+        angle_deg: f32,
+    ) void {
+        _ = angle_deg;
+        self.fillCorners(rect, corners, paint.sampleStops(stops, 0.5));
     }
 
     pub fn resize(self: *Renderer, w: u32, h: u32) void {
@@ -370,6 +406,14 @@ pub const Renderer = struct {
     }
 };
 
+/// Map an arbitrary logical pixel size onto the nearest fixed ladder rung (1..6).
+fn nearestScaleForPx(size_px: f32) u32 {
+    const r = @round(size_px / 14.0);
+    if (!(r > 1.0)) return 1;
+    if (r > 6.0) return 6;
+    return @intFromFloat(r);
+}
+
 fn compileProgram(g: gl.Gl) !gl.GLuint {
     return compileProgram2(g, VERT_SRC, FRAG_SRC);
 }
@@ -397,4 +441,12 @@ fn compileProgram2(g: gl.Gl, vert: [*:0]const u8, frag: [*:0]const u8) !gl.GLuin
     g.deleteShader(fs);
     if (ok == 0) return error.ProgramLinkFailed;
     return prog;
+}
+
+// Zig only analyses a function body when it is referenced. Referencing the new
+// text methods forces their bodies to be type-checked when this backend is built.
+
+test "drawTextSized / textWidthSized are analysed" {
+    _ = &Renderer.drawTextSized;
+    _ = &Renderer.textWidthSized;
 }

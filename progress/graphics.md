@@ -34,6 +34,22 @@
   - build.zig: Backend enum extended to `{ software, opengl, vulkan, d2d }`, links d2d1 + dwrite on Windows
   - app.zig: `.d2d` branch added to RendererMod / init / deinit / syncSize / present
 
+- Arbitrary text sizing + font family on every backend:
+  - `Renderer.drawTextSized(text, x, y, color, size_px, family)` and
+    `Renderer.textWidthSized(text, size_px, family)` (logical px; `family == ""`
+    = default Segoe UI Variable).
+  - Software: 16-slot lazy `HFONT` ring cache keyed by `(rounded_size_px, family)`;
+    `TextCmd.hfont` carries the resolved font through `flushText`; measurement via
+    `GetTextExtentPoint32W` with physical→logical conversion; bitmap-font fallback
+    maps `size_px` to the nearest ladder scale when GDI is unavailable.
+  - D2D: 16-slot lazy `IDWriteTextFormat` ring cache, released in `deinit`.
+  - OpenGL / Vulkan: approximate by the nearest ladder rung.
+  - `Font.nearestScale()` returns the nearest ladder rung (1..6).
+  - Fixed two pre-existing software-renderer test failures found while verifying:
+    `fillCornersPhys` dropped the rightmost pixel of each right/bottom corner
+    (missing `+1`), and `fillLinearGradient` projected onto `width`/`height`
+    instead of the pixel-index span (`extent-1`), so the final stop was never hit.
+
 ### Up Next
 - drawImageRaw in OpenGL backend (texture upload + quad render)
 - Vulkan: replace SPIR-V stubs with real compiled shaders (requires glslangValidator / shaderc)

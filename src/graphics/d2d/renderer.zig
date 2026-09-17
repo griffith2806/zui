@@ -12,6 +12,7 @@ const builtin = @import("builtin");
 const Color   = @import("../../style/color.zig").Color;
 const Rect    = @import("../../layout/geometry.zig").Rect;
 const Image   = @import("../image.zig").Image;
+const paint   = @import("../../style/paint.zig");
 
 comptime {
     if (builtin.os.tag != .windows) @compileError("d2d renderer is Windows-only");
@@ -94,6 +95,15 @@ const D2D1_DRAW_TEXT_OPTIONS_NONE: u32 = 0;
 const DWRITE_MEASURING_MODE_NATURAL: u32 = 0;
 // D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE = 0
 
+// Path geometry / gradient brush enums (see d2d1.h).
+const D2D1_FILL_MODE_ALTERNATE: u32 = 0;
+const D2D1_FIGURE_BEGIN_FILLED: u32 = 0;
+const D2D1_FIGURE_END_CLOSED: u32 = 1;
+const D2D1_SWEEP_DIRECTION_CLOCKWISE: u32 = 1;
+const D2D1_ARC_SIZE_SMALL: u32 = 0;
+const D2D1_GAMMA_2_2: u32 = 0;
+const D2D1_EXTEND_MODE_CLAMP: u32 = 0;
+
 // ── D2D structs ───────────────────────────────────────────────────────────────
 
 const D2D1_COLOR_F = extern struct {
@@ -129,6 +139,24 @@ const D2D1_SIZE_U = extern struct {
 const D2D1_SIZE_F = extern struct {
     width:  FLOAT,
     height: FLOAT,
+};
+
+const D2D1_ARC_SEGMENT = extern struct {
+    point:          D2D1_POINT_2F,
+    size:           D2D1_SIZE_F,
+    rotationAngle:  FLOAT,
+    sweepDirection: u32,   // D2D1_SWEEP_DIRECTION
+    arcSize:        u32,   // D2D1_ARC_SIZE
+};
+
+const D2D1_GRADIENT_STOP = extern struct {
+    position: FLOAT,
+    color:    D2D1_COLOR_F,
+};
+
+const D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES = extern struct {
+    startPoint: D2D1_POINT_2F,
+    endPoint:   D2D1_POINT_2F,
 };
 
 const D2D1_PIXEL_FORMAT = extern struct {
@@ -285,6 +313,63 @@ const ID2D1SolidColorBrushVtbl = extern struct {
     // ID2D1SolidColorBrush (9-10)
     SetColor:       *const fn (*anyopaque, *const D2D1_COLOR_F) callconv(winapi) void,
     GetColor:       *const fn (*anyopaque) callconv(winapi) D2D1_COLOR_F,
+};
+
+// ID2D1PathGeometry : ID2D1Geometry : ID2D1Resource. ID2D1Geometry contributes
+// 13 methods (GetBounds … Widen) at slots 4..16, so Open lands at slot 17.
+const ID2D1PathGeometryVtbl = extern struct {
+    // IUnknown (0-2) + ID2D1Resource.GetFactory (3)
+    QueryInterface: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:        *const fn (*anyopaque) callconv(winapi) ULONG,
+    GetFactory:     *const fn (*anyopaque, *?*anyopaque) callconv(winapi) void,
+    _pad_4_16:      [13]*const anyopaque, // ID2D1Geometry
+    Open:            *const fn (*anyopaque, *?*anyopaque) callconv(winapi) HRESULT, // 17
+    Stream:          *const fn (*anyopaque, *anyopaque) callconv(winapi) HRESULT,   // 18
+    GetSegmentCount: *const fn (*anyopaque, *u32) callconv(winapi) HRESULT,         // 19
+    GetFigureCount:  *const fn (*anyopaque, *u32) callconv(winapi) HRESULT,         // 20
+};
+
+// ID2D1GeometrySink : ID2D1SimplifiedGeometrySink : IUnknown.
+const ID2D1GeometrySinkVtbl = extern struct {
+    // IUnknown (0-2)
+    QueryInterface: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:        *const fn (*anyopaque) callconv(winapi) ULONG,
+    // ID2D1SimplifiedGeometrySink (3-9)
+    SetFillMode:     *const fn (*anyopaque, u32) callconv(winapi) void,
+    SetSegmentFlags: *const fn (*anyopaque, u32) callconv(winapi) void,
+    BeginFigure:     *const fn (*anyopaque, D2D1_POINT_2F, u32) callconv(winapi) void,
+    AddLines:        *const fn (*anyopaque, [*]const D2D1_POINT_2F, u32) callconv(winapi) void,
+    AddBeziers:      *const fn (*anyopaque, *const anyopaque, u32) callconv(winapi) void,
+    EndFigure:       *const fn (*anyopaque, u32) callconv(winapi) HRESULT,
+    Close:           *const fn (*anyopaque) callconv(winapi) HRESULT,
+    // ID2D1GeometrySink (10-14)
+    AddLine:             *const fn (*anyopaque, D2D1_POINT_2F) callconv(winapi) void,
+    AddBezier:           *const fn (*anyopaque, *const anyopaque) callconv(winapi) void,
+    AddQuadraticBezier:  *const fn (*anyopaque, *const anyopaque) callconv(winapi) void,
+    AddQuadraticBeziers: *const fn (*anyopaque, *const anyopaque, u32) callconv(winapi) void,
+    AddArc:              *const fn (*anyopaque, *const D2D1_ARC_SEGMENT) callconv(winapi) void,
+};
+
+// ID2D1LinearGradientBrush : ID2D1Brush : ID2D1Resource.
+const ID2D1LinearGradientBrushVtbl = extern struct {
+    // IUnknown (0-2) + ID2D1Resource.GetFactory (3)
+    QueryInterface: *const fn (*anyopaque, *const GUID, *?*anyopaque) callconv(winapi) HRESULT,
+    AddRef:         *const fn (*anyopaque) callconv(winapi) ULONG,
+    Release:        *const fn (*anyopaque) callconv(winapi) ULONG,
+    GetFactory:     *const fn (*anyopaque, *?*anyopaque) callconv(winapi) void,
+    // ID2D1Brush (4-7)
+    SetOpacity:     *const fn (*anyopaque, FLOAT) callconv(winapi) void,
+    SetTransform:   *const fn (*anyopaque, *const anyopaque) callconv(winapi) void,
+    GetOpacity:     *const fn (*anyopaque) callconv(winapi) FLOAT,
+    GetTransform:   *const fn (*anyopaque, *anyopaque) callconv(winapi) void,
+    // ID2D1LinearGradientBrush (8-12)
+    SetStartPoint:  *const fn (*anyopaque, D2D1_POINT_2F) callconv(winapi) void,
+    SetEndPoint:    *const fn (*anyopaque, D2D1_POINT_2F) callconv(winapi) void,
+    GetStartPoint:  *const fn (*anyopaque) callconv(winapi) D2D1_POINT_2F,
+    GetEndPoint:    *const fn (*anyopaque) callconv(winapi) D2D1_POINT_2F,
+    GetGradientStopCollection: *const fn (*anyopaque, *?*anyopaque) callconv(winapi) void,
 };
 
 // ID2D1Bitmap vtable (partial)
@@ -450,6 +535,9 @@ const IDWriteTextLayoutVtbl = extern struct {
 const ID2D1FactoryFace          = extern struct { vtbl: *const ID2D1FactoryVtbl };
 const ID2D1HwndRenderTargetFace = extern struct { vtbl: *const ID2D1HwndRenderTargetVtbl };
 const ID2D1SolidColorBrushFace  = extern struct { vtbl: *const ID2D1SolidColorBrushVtbl };
+const ID2D1PathGeometryFace        = extern struct { vtbl: *const ID2D1PathGeometryVtbl };
+const ID2D1GeometrySinkFace        = extern struct { vtbl: *const ID2D1GeometrySinkVtbl };
+const ID2D1LinearGradientBrushFace = extern struct { vtbl: *const ID2D1LinearGradientBrushVtbl };
 const ID2D1BitmapFace           = extern struct { vtbl: *const ID2D1BitmapVtbl };
 const IDWriteFactoryFace        = extern struct { vtbl: *const IDWriteFactoryVtbl };
 const IDWriteTextFormatFace     = extern struct { vtbl: *const IDWriteTextFormatVtbl };
@@ -663,6 +751,17 @@ fn relCom(p: *anyopaque) void {
     _ = u.vtbl.Release(@ptrCast(u));
 }
 
+/// A 90-degree clockwise circular arc ending at `point` with radius `r`.
+fn arcSeg(point: D2D1_POINT_2F, r: FLOAT) D2D1_ARC_SEGMENT {
+    return .{
+        .point = point,
+        .size = .{ .width = r, .height = r },
+        .rotationAngle = 0,
+        .sweepDirection = D2D1_SWEEP_DIRECTION_CLOCKWISE,
+        .arcSize = D2D1_ARC_SIZE_SMALL,
+    };
+}
+
 /// Bind the swapchain's backbuffer as the device context's render target.
 /// Returns the ID2D1Bitmap1 target (caller owns a ref). Used by init and resize.
 fn makeSwapchainTarget(swapchain: *IDXGISwapChainFace, dc: *ID2D1DeviceContextFace) !*anyopaque {
@@ -693,6 +792,19 @@ fn makeSwapchainTarget(swapchain: *IDXGISwapChainFace, dc: *ID2D1DeviceContextFa
 
 const FONT_PX = [7]f32{ 0, 14, 22, 32, 44, 60, 80 };
 const NUM_FONT_SCALES: usize = FONT_PX.len;
+
+// Arbitrary-size text format cache. `drawTextSized` accepts any logical pixel
+// size + family, so IDWriteTextFormats are created lazily and kept in a small
+// fixed-size ring cache keyed by (rounded_size_px, family).
+const FONT_CACHE_SLOTS = 16;
+const FAMILY_MAX = 64;
+
+const SizedTextFormat = struct {
+    size_px:    i32 = 0,
+    family_len: u8  = 0,
+    family:     [FAMILY_MAX]u8 = [_]u8{0} ** FAMILY_MAX,
+    fmt:        ?*IDWriteTextFormatFace = null,
+};
 
 /// Approximate line-height for layout purposes (scale=1 body text).
 pub const LINE_H: u32 = 18;
@@ -955,6 +1067,9 @@ pub const Renderer = struct {
     dwrite:         ?*IDWriteFactoryFace, // null if DirectWrite is unavailable (text disabled)
     text_formats:   [NUM_FONT_SCALES]?*IDWriteTextFormatFace,
     icon_formats:   [NUM_FONT_SCALES]?*IDWriteTextFormatFace, // Segoe MDL2 Assets
+    // Lazily-created arbitrary-size formats (see getSizedFormat).
+    sized_formats:  [FONT_CACHE_SLOTS]SizedTextFormat = [_]SizedTextFormat{.{}} ** FONT_CACHE_SLOTS,
+    sized_next:     usize = 0,
     dpi_scale:      f32,
     width:          u32,
     height:         u32,
@@ -1165,6 +1280,9 @@ pub const Renderer = struct {
         for (&self.icon_formats) |*fmt| {
             if (fmt.*) |f| { _ = f.vtbl.Release(@ptrCast(f)); fmt.* = null; }
         }
+        for (&self.sized_formats) |*sf| {
+            if (sf.fmt) |f| { _ = f.vtbl.Release(@ptrCast(f)); sf.fmt = null; }
+        }
         if (self.dwrite) |dw| _ = dw.vtbl.Release(@ptrCast(dw));
         _ = self.brush.vtbl.Release(@ptrCast(self.brush));
         // Unbind + release the swapchain target, then the device context (which is
@@ -1267,6 +1385,166 @@ pub const Renderer = struct {
         );
     }
 
+    /// Build an exact per-corner rounded rect as an ID2D1PathGeometry (circular
+    /// arcs; `Corners.smoothing` is ignored, matching the software rasterizer).
+    /// Returns null on failure; the caller owns the geometry and releases it.
+    fn buildCornersGeometry(self: *Renderer, rect: Rect, corners: paint.Corners) ?*ID2D1PathGeometryFace {
+        var factory_raw: ?*anyopaque = null;
+        self.render_target.vtbl.GetFactory(@ptrCast(self.render_target), &factory_raw);
+        const factory_ptr = factory_raw orelse return null;
+        defer relCom(factory_ptr);
+        const factory: *ID2D1FactoryFace = @ptrCast(@alignCast(factory_ptr));
+
+        var geo_raw: ?*anyopaque = null;
+        if (factory.vtbl.CreatePathGeometry(@ptrCast(factory), &geo_raw) != S_OK or geo_raw == null)
+            return null;
+        const geo: *ID2D1PathGeometryFace = @ptrCast(@alignCast(geo_raw.?));
+
+        var sink_raw: ?*anyopaque = null;
+        if (geo.vtbl.Open(@ptrCast(geo), &sink_raw) != S_OK or sink_raw == null) {
+            relCom(@ptrCast(geo));
+            return null;
+        }
+        const sink: *ID2D1GeometrySinkFace = @ptrCast(@alignCast(sink_raw.?));
+
+        const left   = toDip(rect.x);
+        const top    = toDip(rect.y);
+        const right  = toDip(rect.right());
+        const bottom = toDip(rect.bottom());
+        const maxr   = @min(right - left, bottom - top) / 2.0;
+        const tl = std.math.clamp(corners.tl, 0, maxr);
+        const tr = std.math.clamp(corners.tr, 0, maxr);
+        const br = std.math.clamp(corners.br, 0, maxr);
+        const bl = std.math.clamp(corners.bl, 0, maxr);
+
+        sink.vtbl.SetFillMode(@ptrCast(sink), D2D1_FILL_MODE_ALTERNATE);
+        sink.vtbl.BeginFigure(@ptrCast(sink), .{ .x = left + tl, .y = top }, D2D1_FIGURE_BEGIN_FILLED);
+        sink.vtbl.AddLine(@ptrCast(sink), .{ .x = right - tr, .y = top });
+        if (tr > 0) {
+            const a = arcSeg(.{ .x = right, .y = top + tr }, tr);
+            sink.vtbl.AddArc(@ptrCast(sink), &a);
+        }
+        sink.vtbl.AddLine(@ptrCast(sink), .{ .x = right, .y = bottom - br });
+        if (br > 0) {
+            const a = arcSeg(.{ .x = right - br, .y = bottom }, br);
+            sink.vtbl.AddArc(@ptrCast(sink), &a);
+        }
+        sink.vtbl.AddLine(@ptrCast(sink), .{ .x = left + bl, .y = bottom });
+        if (bl > 0) {
+            const a = arcSeg(.{ .x = left, .y = bottom - bl }, bl);
+            sink.vtbl.AddArc(@ptrCast(sink), &a);
+        }
+        sink.vtbl.AddLine(@ptrCast(sink), .{ .x = left, .y = top + tl });
+        if (tl > 0) {
+            const a = arcSeg(.{ .x = left + tl, .y = top }, tl);
+            sink.vtbl.AddArc(@ptrCast(sink), &a);
+        }
+        _ = sink.vtbl.EndFigure(@ptrCast(sink), D2D1_FIGURE_END_CLOSED);
+        _ = sink.vtbl.Close(@ptrCast(sink));
+        relCom(@ptrCast(sink));
+        return geo;
+    }
+
+    /// Fill a rect with independent per-corner radii via an exact path geometry.
+    pub fn fillCorners(self: *Renderer, rect: Rect, corners: paint.Corners, color: Color) void {
+        if (!self.begin_draw_called) return;
+        if (corners.maxRadius() <= 0) {
+            self.fillRect(rect, color);
+            return;
+        }
+        const geo = self.buildCornersGeometry(rect, corners) orelse return;
+        defer relCom(@ptrCast(geo));
+        self.setBrushColor(color);
+        self.render_target.vtbl.FillGeometry(
+            @ptrCast(self.render_target),
+            @ptrCast(geo),
+            @ptrCast(self.brush),
+            null,
+        );
+    }
+
+    /// Linear gradient fill via ID2D1GradientStopCollection +
+    /// ID2D1LinearGradientBrush. `angle_deg` 0 = left→right, 90 = top→bottom.
+    pub fn fillLinearGradient(
+        self: *Renderer,
+        rect: Rect,
+        corners: paint.Corners,
+        stops: []const paint.GradientStop,
+        angle_deg: f32,
+    ) void {
+        if (!self.begin_draw_called) return;
+        if (stops.len == 0) return;
+
+        // Fixed-capacity stop buffer — no heap allocation.
+        var stop_buf: [paint.MAX_GRADIENT_STOPS]D2D1_GRADIENT_STOP = undefined;
+        const n = @min(stops.len, paint.MAX_GRADIENT_STOPS);
+        for (stops[0..n], 0..) |s, i| {
+            stop_buf[i] = .{ .position = s.position, .color = toColorF(s.color) };
+        }
+
+        var coll_raw: ?*anyopaque = null;
+        if (self.render_target.vtbl.CreateGradientStopCollection(
+            @ptrCast(self.render_target),
+            @ptrCast(&stop_buf),
+            @intCast(n),
+            D2D1_GAMMA_2_2,
+            D2D1_EXTEND_MODE_CLAMP,
+            &coll_raw,
+        ) != S_OK or coll_raw == null) return;
+        const coll = coll_raw.?;
+        defer relCom(coll);
+
+        // Project the rect corners onto the gradient direction to get the axis
+        // endpoints (matches the software renderer).
+        const w = toDipU(rect.width);
+        const h = toDipU(rect.height);
+        const rad = angle_deg * std.math.pi / 180.0;
+        const dir_x = std.math.cos(rad);
+        const dir_y = std.math.sin(rad);
+        const p0: f32 = 0;
+        const p1: f32 = w * dir_x;
+        const p2: f32 = h * dir_y;
+        const p3: f32 = w * dir_x + h * dir_y;
+        const pmin = @min(@min(p0, p1), @min(p2, p3));
+        const pmax = @max(@max(p0, p1), @max(p2, p3));
+        const left = toDip(rect.x);
+        const top  = toDip(rect.y);
+
+        const props = D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES{
+            .startPoint = .{ .x = left + dir_x * pmin, .y = top + dir_y * pmin },
+            .endPoint   = .{ .x = left + dir_x * pmax, .y = top + dir_y * pmax },
+        };
+        var brush_raw: ?*anyopaque = null;
+        if (self.render_target.vtbl.CreateLinearGradientBrush(
+            @ptrCast(self.render_target),
+            @ptrCast(&props),
+            null,
+            coll,
+            &brush_raw,
+        ) != S_OK or brush_raw == null) return;
+        const gbrush = brush_raw.?;
+        defer relCom(gbrush);
+
+        if (corners.maxRadius() > 0) {
+            const geo = self.buildCornersGeometry(rect, corners) orelse return;
+            defer relCom(@ptrCast(geo));
+            self.render_target.vtbl.FillGeometry(
+                @ptrCast(self.render_target),
+                @ptrCast(geo),
+                gbrush,
+                null,
+            );
+        } else {
+            const d2d_rect = D2D1_RECT_F{
+                .left   = left,
+                .top    = top,
+                .right  = toDip(rect.right()),
+                .bottom = toDip(rect.bottom()),
+            };
+            self.render_target.vtbl.FillRectangle(@ptrCast(self.render_target), &d2d_rect, gbrush);
+        }
+    }
+
     // ── Text rendering ─────────────────────────────────────────────────────────
 
     /// Draw body text (scale=1 / 14 DIP Segoe UI Variable).
@@ -1286,6 +1564,53 @@ pub const Renderer = struct {
     pub fn drawIcon(self: *Renderer, icon: []const u8, x: i32, y: i32, color: Color, scale: u32) void {
         const idx = @min(scale, NUM_FONT_SCALES - 1);
         self.drawGlyphs(icon, x, y, color, self.icon_formats[idx]);
+    }
+
+    /// Draw text at an arbitrary logical pixel size using `family` (empty family
+    /// = the default UI font). Resolves/creates the IDWriteTextFormat on demand.
+    pub fn drawTextSized(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, size_px: f32, family: []const u8) void {
+        const fmt = self.getSizedFormat(size_px, family);
+        self.drawGlyphs(text, x, y, color, fmt);
+    }
+
+    /// Resolve (creating on first use) an IDWriteTextFormat for an arbitrary
+    /// logical pixel size + family. Empty `family` = the default UI font.
+    fn getSizedFormat(self: *const Renderer, size_px: f32, family: []const u8) ?*IDWriteTextFormatFace {
+        const dw = self.dwrite orelse return null;
+        const rounded: i32 = @intFromFloat(@round(size_px));
+        if (rounded <= 0) return null;
+        const fam: []const u8 = if (family.len == 0) "Segoe UI Variable" else family;
+        if (fam.len == 0 or fam.len > FAMILY_MAX - 1) return null;
+        const self_mut = @constCast(self);
+        for (&self_mut.sized_formats) |*sf| {
+            if (sf.fmt != null and sf.size_px == rounded and
+                std.mem.eql(u8, sf.family[0..sf.family_len], fam)) return sf.fmt;
+        }
+        var wbuf: [FAMILY_MAX]u16 = undefined;
+        const n = std.unicode.utf8ToUtf16Le(&wbuf, fam) catch return null;
+        if (n >= wbuf.len) return null;
+        wbuf[n] = 0;
+        var fmt_raw: ?*anyopaque = null;
+        if (dw.vtbl.CreateTextFormat(
+            @ptrCast(dw),
+            wbuf[0..n :0].ptr,
+            null,
+            DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL,
+            size_px,
+            LOCALE_EN_US,
+            &fmt_raw,
+        ) != S_OK or fmt_raw == null) return null;
+        const fmt: *IDWriteTextFormatFace = @ptrCast(@alignCast(fmt_raw.?));
+        const slot = &self_mut.sized_formats[self_mut.sized_next];
+        if (slot.fmt) |old| _ = old.vtbl.Release(@ptrCast(old));
+        slot.size_px = rounded;
+        slot.family_len = @intCast(fam.len);
+        @memcpy(slot.family[0..fam.len], fam);
+        slot.fmt = fmt;
+        self_mut.sized_next = (self_mut.sized_next + 1) % FONT_CACHE_SLOTS;
+        return fmt;
     }
 
     fn drawGlyphs(self: *Renderer, text: []const u8, x: i32, y: i32, color: Color, fmt_opt: ?*IDWriteTextFormatFace) void {
@@ -1324,6 +1649,12 @@ pub const Renderer = struct {
     pub fn textWidthScaled(self: *const Renderer, text: []const u8, scale: u32) u32 {
         const idx = @min(scale, NUM_FONT_SCALES - 1);
         return self.glyphsWidth(text, self.text_formats[idx]);
+    }
+
+    /// Measure text at an arbitrary logical pixel size + family, in logical pixels.
+    pub fn textWidthSized(self: *const Renderer, text: []const u8, size_px: f32, family: []const u8) u32 {
+        const fmt = self.getSizedFormat(size_px, family);
+        return self.glyphsWidth(text, fmt);
     }
 
     /// Measure icon-glyph width (Segoe MDL2 Assets).
@@ -1617,3 +1948,15 @@ pub const Renderer = struct {
         self.height = height;
     }
 };
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+// Zig only analyses a function body when it is referenced. Taking the address
+// of the new text methods forces their bodies to be type-checked in the D2D
+// test build (a real Renderer needs COM objects, so it cannot be instantiated).
+
+test "drawTextSized / textWidthSized are analysed" {
+    _ = &Renderer.drawTextSized;
+    _ = &Renderer.textWidthSized;
+    _ = &Renderer.getSizedFormat;
+}
+

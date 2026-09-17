@@ -271,6 +271,28 @@ def test_new_widgets(win, r):
     r.assert_exists(win, "DatePicker", "ComboBox")
 
 
+def test_components(win, r):
+    print("\n[Components]")
+    nav(win, "Components", r)
+
+    # Icon / ImageView / Avatar all expose role .image -> UIA Group
+    r.assert_exists(win, "Settings icon", "Group")
+    r.assert_exists(win, "Sample image",  "Group")
+    r.assert_exists(win, "ZUI avatar",    "Group")
+
+    # Badge exposes role .label -> UIA Text
+    r.assert_exists(win, "New", "Text")
+
+    # Link exposes role .link -> UIA Hyperlink with Invoke pattern
+    r.assert_click(win, "Open documentation", "Hyperlink")
+
+    # ProgressRing exposes role .progress_bar -> UIA ProgressBar
+    r.assert_exists(win, "Progress", "ProgressBar")
+
+    # Toggle exposes role .checkbox -> UIA CheckBox with Toggle pattern
+    r.assert_click(win, "Enable feature", "CheckBox")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -308,6 +330,7 @@ def main():
         test_data_binding(win, r)
         test_file_dialogs(win, r)
         test_new_widgets(win, r)
+        test_components(win, r)
     finally:
         if proc:
             proc.terminate()

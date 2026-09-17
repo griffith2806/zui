@@ -195,8 +195,12 @@ r.drawText(text: []const u8, x: i32, y: i32, color: Color)           // scale 1 
 r.drawTextScaled(text: []const u8, x: i32, y: i32, color: Color, scale: u8)
     // scale 1→14px  2→22px  3→32px  4→44px  5→60px  6→80px
     // Uses GDI Segoe UI Variable (ClearType) on Windows
+r.drawTextSized(text: []const u8, x: i32, y: i32, color: Color, size_px: f32, family: []const u8)
+    // arbitrary logical pixel size + font family ("" = default Segoe UI Variable)
 r.textWidth(text: []const u8) u32
 r.textWidthScaled(text: []const u8, scale: u8) u32
+r.textWidthSized(text: []const u8, size_px: f32, family: []const u8) u32
+    // measure at arbitrary size/family; returns LOGICAL pixels
 r.drawImage(image: Image, dst: Rect) void     // nearest-neighbor scale blit
 r.drawScrollbar(rect: Rect, thumb: Rect, theme: Theme) void
 

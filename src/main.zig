@@ -18,11 +18,14 @@ const NAV_ITEM_A = zui.Color.rgb( 42,  42,  48);
 
 const NAV_W: i32 = 220;
 const HDR_H: i32 = 48;
+const NAV_TOP: i32 = HDR_H + 8;
+const NAV_STRIDE: i32 = 44;
+const NAV_FOOTER: i32 = 28;
 var W: u32 = 1060;
 var H: u32 = 680;
 
 // ── Navigation ───────────────────────────────────────────────────────────────
-const Page = enum { dashboard, controls, inputs, overlays, colors, layout, styles, animations, about, images, data_binding, file_dialogs, new_widgets };
+const Page = enum { dashboard, controls, inputs, overlays, colors, layout, styles, animations, about, images, data_binding, file_dialogs, new_widgets, components };
 
 const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
     .{ .label = "Dashboard",    .page = .dashboard,    .icon = "D" },
@@ -38,6 +41,7 @@ const NAV_ITEMS = [_]struct { label: []const u8, page: Page, icon: []const u8 }{
     .{ .label = "Data Binding", .page = .data_binding, .icon = "B" },
     .{ .label = "File Dialogs", .page = .file_dialogs, .icon = "F" },
     .{ .label = "New Widgets",  .page = .new_widgets,  .icon = "N" },
+    .{ .label = "Components",   .page = .components,   .icon = "V" },
 };
 
 /// Context for a sidebar item's UIA Invoke action. The sidebar buttons are
@@ -1005,6 +1009,86 @@ const NewWidgetsState = struct {
     }
 };
 
+const ComponentsState = struct {
+    icon:       zui.Icon         = .{ .glyph = zui.icons.settings, .scale = 2, .color = FG },
+    image_view: zui.ImageView    = .{ .alt = "Sample image" },
+    avatar:     zui.Avatar       = .{ .initials = "ZUI" },
+    badge:      zui.Badge        = .{ .text = "New" },
+    link:       zui.Link         = .{ .text = "Open documentation" },
+    ring:       zui.ProgressRing = .{ .value = 0.65 },
+    toggle:     zui.Toggle       = .{ .label = "Enable feature" },
+    image:      zui.Image        = undefined,
+    has_image:  bool             = false,
+    ring_t:     f32              = 0.0,
+
+    pub fn init(self: *ComponentsState, alloc: std.mem.Allocator) !void {
+        self.image = try zui.Image.solid(alloc, 64, 64, 0xFF_0078D4);
+        self.has_image = true;
+        self.image_view.image = &self.image;
+        self.avatar.image = &self.image;
+    }
+
+    pub fn deinit(self: *ComponentsState, alloc: std.mem.Allocator) void {
+        self.link.deinit(alloc);
+        self.toggle.deinit(alloc);
+        if (self.has_image) self.image.deinit(alloc);
+    }
+
+    fn iconRect()   zui.Rect { return zui.Rect.init(cx(), cy() + 40, 40, 40); }
+    fn imageRect()  zui.Rect { return zui.Rect.init(cx() + 80, cy() + 40, 96, 96); }
+    fn avatarRect() zui.Rect { return zui.Rect.init(cx(), cy() + 110, 48, 48); }
+    fn badgeRect()  zui.Rect { return zui.Rect.init(cx() + 80, cy() + 150, 52, 18); }
+    fn linkRect()   zui.Rect { return zui.Rect.init(cx(), cy() + 190, 220, 18); }
+    fn ringRect()   zui.Rect { return zui.Rect.init(cx() + 360, cy() + 40, 64, 64); }
+    fn toggleRect() zui.Rect { return zui.Rect.init(cx() + 360, cy() + 130, 40, 22); }
+
+    pub fn handleEvent(self: *ComponentsState, ev: zui.Event) void {
+        if (self.link.handleEvent(ev, linkRect())) g_uia_dirty = true;
+        if (self.toggle.handleEvent(ev, toggleRect().x, toggleRect().y)) g_uia_dirty = true;
+    }
+
+    pub fn update(self: *ComponentsState, dt_s: f32) void {
+        self.toggle.update(dt_s);
+        self.ring_t += dt_s;
+        self.ring.value = 0.5 + 0.5 * std.math.sin(self.ring_t * 1.5);
+    }
+
+    pub fn draw(self: *const ComponentsState, r: *zui.Renderer, dark_mode: bool) void {
+        _ = dark_mode;
+        const lx = cx();
+        const base = cy();
+        const ly = HDR_H + 16;
+
+        r.drawTextScaled("Components", lx, ly, FG, 2);
+        r.drawText("Icon, ImageView, Avatar, Badge, Link, ProgressRing, Toggle", lx, ly + 30, FG_SEC);
+
+        sectionLabel(r, lx, base, "Icon");
+        self.icon.draw(r, iconRect());
+
+        sectionLabel(r, lx + 80, base, "ImageView");
+        self.image_view.draw(r, imageRect());
+
+        sectionLabel(r, lx, base + 70, "Avatar");
+        self.avatar.draw(r, avatarRect());
+
+        sectionLabel(r, lx + 80, base + 70, "Badge");
+        self.badge.draw(r, badgeRect());
+
+        sectionLabel(r, lx, base + 130, "Link");
+        self.link.draw(r, linkRect());
+        r.drawText("(hover for underline, click to invoke)", lx, base + 152, FG_TER);
+
+        sectionLabel(r, lx + 360, base, "ProgressRing");
+        self.ring.draw(r, ringRect());
+        var ring_buf: [32]u8 = undefined;
+        const ring_str = std.fmt.bufPrint(&ring_buf, "{d:.0}%", .{self.ring.value * 100.0}) catch "";
+        r.drawText(ring_str, lx + 430, base + 60, FG_SEC);
+
+        sectionLabel(r, lx + 360, base + 90, "Toggle");
+        self.toggle.draw(r, toggleRect().x, toggleRect().y);
+    }
+};
+
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN LOOP
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1025,6 +1109,7 @@ pub fn main(init: std.process.Init) !void {
     var page: Page     = .dashboard;
     var dark_mode      = true;
     var about_expanded = false;
+    var sidebar_scroll: i32 = 0; // sidebar nav scroll offset (px, >= 0)
     var redraw_cnt: u32 = 3; // frames to draw; set on events/animations
     var uia_dirty      = true; // rebuild accessibility tree once per meaningful event
 
@@ -1056,6 +1141,10 @@ pub fn main(init: std.process.Init) !void {
     var new_widgets = NewWidgetsState{};
     defer new_widgets.deinit(alloc);
 
+    var components = ComponentsState{};
+    try components.init(alloc);
+    defer components.deinit(alloc);
+
     var nav_rects: [NAV_ITEMS.len]zui.Rect = undefined;
     var nav_hover_t: [NAV_ITEMS.len]f32  = .{0.0}   ** NAV_ITEMS.len;
     var nav_hovered: [NAV_ITEMS.len]bool = .{false}  ** NAV_ITEMS.len;
@@ -1076,8 +1165,13 @@ pub fn main(init: std.process.Init) !void {
         const win_rect = zui.Rect.init(0, 0, W, H);
 
         // Recompute nav_rects every frame so they stay accurate after resize.
+        // The sidebar scrolls when its content is taller than the viewport.
+        const nav_content_h: i32 = NAV_TOP + @as(i32, NAV_ITEMS.len) * NAV_STRIDE + 8 + 30 + 8;
+        const nav_view_h: i32 = @as(i32, @intCast(H)) - HDR_H - NAV_FOOTER;
+        const nav_max_scroll: i32 = @max(0, nav_content_h - nav_view_h);
+        sidebar_scroll = std.math.clamp(sidebar_scroll, 0, nav_max_scroll);
         for (0..NAV_ITEMS.len) |i|
-            nav_rects[i] = zui.Rect.init(8, HDR_H + 8 + @as(i32, @intCast(i)) * 44,
+            nav_rects[i] = zui.Rect.init(8, NAV_TOP + @as(i32, @intCast(i)) * NAV_STRIDE - sidebar_scroll,
                                          @intCast(NAV_W - 16), 38);
 
         // ── Events ──────────────────────────────────────────────────────────
@@ -1102,9 +1196,21 @@ pub fn main(init: std.process.Init) !void {
                 },
                 .mouse_press => |m| {
                     heavy_event = true;
-                    for (NAV_ITEMS, 0..) |item, i| {
-                        if (m.button == .left and nav_rects[i].contains(.{ .x = m.x, .y = m.y }))
-                            page = item.page;
+                    // Only hit-test nav items that are inside the visible sidebar viewport.
+                    if (m.x < NAV_W and m.y >= HDR_H and m.y < @as(i32, @intCast(H)) - NAV_FOOTER) {
+                        for (NAV_ITEMS, 0..) |item, i| {
+                            if (m.button == .left and nav_rects[i].contains(.{ .x = m.x, .y = m.y }))
+                                page = item.page;
+                        }
+                    }
+                },
+                .scroll => |s| {
+                    // Mouse wheel over the sidebar scrolls the nav menu.
+                    if (s.x < NAV_W and s.y >= HDR_H) {
+                        sidebar_scroll = std.math.clamp(
+                            sidebar_scroll - @as(i32, @intFromFloat(s.dy * 48.0)),
+                            0, nav_max_scroll);
+                        heavy_event = true;
                     }
                 },
                 .mouse_release => { heavy_event = true; },
@@ -1124,6 +1230,7 @@ pub fn main(init: std.process.Init) !void {
                 .data_binding => data_binding.handleEvent(ev),
                 .file_dialogs => file_dialogs.handleEvent(ev, alloc),
                 .new_widgets  => new_widgets.handleEvent(ev),
+                .components   => components.handleEvent(ev),
                 .about        => {
                     const sa_rect = zui.Rect.init(NAV_W, HDR_H, W -| @as(u32, @intCast(NAV_W)), H -| @as(u32, @intCast(HDR_H)));
                     _ = about_scroll.handleEvent(ev, sa_rect);
@@ -1167,6 +1274,7 @@ pub fn main(init: std.process.Init) !void {
         data_binding.update(dt_s);
         file_dialogs.update(dt_s);
         if (page == .new_widgets) new_widgets.update(dt_s);
+        if (page == .components) components.update(dt_s);
         if (page == .animations) animations.update(dt_s);
         for (0..NAV_ITEMS.len) |i| {
             nav_hover_t[i] += (@as(f32, if (nav_hovered[i]) 1.0 else 0.0) - nav_hover_t[i]) *
@@ -1185,6 +1293,7 @@ pub fn main(init: std.process.Init) !void {
         }
         if (page == .overlays    and overlays.tip_hovered)     redraw_cnt = @max(redraw_cnt, 2);
         if (page == .new_widgets and new_widgets.tip_int_hov)  redraw_cnt = @max(redraw_cnt, 2);
+        if (page == .components) redraw_cnt = @max(redraw_cnt, 1);
         if (page == .animations) {
             var anim_live = !animations.ball_x.isSettled() or !animations.ball_y.isSettled() or
                             !animations.color_anim.r.isSettled();
@@ -1200,7 +1309,7 @@ pub fn main(init: std.process.Init) !void {
         if (redraw_cnt > 0 and W > 0 and H > 0) {
             redraw_cnt -= 1;
             app.renderer.clear(if (dark_mode) BG else zui.Color.rgb(240, 240, 245));
-            drawSidebar(&app.renderer, page, &nav_rects, &nav_hover_t, dark_mode);
+            drawSidebar(&app.renderer, page, &nav_rects, &nav_hover_t, dark_mode, sidebar_scroll, nav_max_scroll, nav_view_h);
             drawHeader(&app.renderer, page, dark_mode);
 
             switch (page) {
@@ -1217,6 +1326,7 @@ pub fn main(init: std.process.Init) !void {
                 .data_binding => data_binding.draw(&app.renderer, dark_mode),
                 .file_dialogs => file_dialogs.draw(&app.renderer, dark_mode),
                 .new_widgets  => new_widgets.draw(&app.renderer, dark_mode, zui.Rect.init(0, 0, W, H)),
+                .components   => components.draw(&app.renderer, dark_mode),
             }
 
             app.present();
@@ -1225,7 +1335,7 @@ pub fn main(init: std.process.Init) !void {
             // relevant changed (page nav, clicks, key events, widget actions) —
             // not on every repaint.
             if (uia_dirty or g_uia_dirty) {
-                buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, &images, &data_binding, &file_dialogs, &new_widgets, about_expanded, &nav_rects, &nav_invoke_ctx, alloc);
+                buildAccessibilityTree(&app, page, &controls, &inputs, &animations, &overlays, &images, &data_binding, &file_dialogs, &new_widgets, &components, about_expanded, &nav_rects, &nav_invoke_ctx, sidebar_scroll, alloc);
                 uia_dirty = false;
                 g_uia_dirty = false;
             }
@@ -1249,16 +1359,29 @@ fn buildAccessibilityTree(
     data_binding:   *DataBindingState,
     file_dialogs:   *FileDialogsState,
     new_widgets_st: *NewWidgetsState,
+    components:     *ComponentsState,
     about_expanded: bool,
     nav_rects:      []const zui.Rect,
     nav_ctx:        []NavInvokeCtx,
+    sidebar_scroll: i32,
     alloc:          std.mem.Allocator,
 ) void {
     var nodes: [128]zui.AccessNode = undefined;
     var n: usize = 0;
 
-    // Navigation sidebar items (always present). Wire IInvokeProvider so UI
-    // automation and screen readers can actually switch pages.
+    // Navigation sidebar (always present). The sidebar is published as a single
+    // group node with its items nested one level below (depth 1) so the UIA tree
+    // reflects the visual hierarchy.
+    if (n < nodes.len) {
+        nodes[n] = .{
+            .role   = .group,
+            .name   = "Navigation",
+            .bounds = zui.Rect.init(0, HDR_H, NAV_W, 8 + @as(u32, NAV_ITEMS.len) * 44 + 8 + 30),
+            .state  = .{ .enabled = true },
+            .depth  = 0,
+        };
+        n += 1;
+    }
     for (NAV_ITEMS, 0..) |item, i| {
         if (n >= nodes.len) break;
         nodes[n] = .{
@@ -1266,6 +1389,7 @@ fn buildAccessibilityTree(
             .name      = item.label,
             .bounds    = nav_rects[i],
             .state     = .{ .selected = item.page == page, .enabled = true },
+            .depth     = 1,
             .invoke_fn = navInvoke,
             .ctx       = @ptrCast(&nav_ctx[i]),
         };
@@ -1273,12 +1397,13 @@ fn buildAccessibilityTree(
     }
     // Sidebar search box (decorative; read-only for screen readers)
     if (n < nodes.len) {
-        const sx: i32 = HDR_H + 8 + @as(i32, NAV_ITEMS.len) * 44 + 8;
+        const sx: i32 = NAV_TOP + @as(i32, NAV_ITEMS.len) * NAV_STRIDE + 8 - sidebar_scroll;
         nodes[n] = .{
             .role   = .text_field,
             .name   = "Search",
             .bounds = zui.Rect.init(8, sx, NAV_W - 16, 30),
             .state  = .{ .read_only = true, .enabled = true },
+            .depth  = 1,
         };
         n += 1;
     }
@@ -1542,6 +1667,17 @@ fn buildAccessibilityTree(
                 n += 1;
             }
         },
+        .components => {
+            const lx2 = cx(); const base2 = cy();
+            if (n < nodes.len) { nodes[n] = components.icon.accessNode("Settings icon", ComponentsState.iconRect()); n += 1; }
+            if (n < nodes.len) { nodes[n] = components.image_view.accessNode(ComponentsState.imageRect()); n += 1; }
+            if (n < nodes.len) { nodes[n] = components.avatar.accessNode("ZUI avatar", ComponentsState.avatarRect()); n += 1; }
+            if (n < nodes.len) { nodes[n] = components.badge.accessNode(ComponentsState.badgeRect()); n += 1; }
+            if (n < nodes.len) { nodes[n] = components.link.accessNode(ComponentsState.linkRect(), false); n += 1; }
+            if (n < nodes.len) { nodes[n] = components.ring.accessNode("Progress", ComponentsState.ringRect()); n += 1; }
+            if (n < nodes.len) { nodes[n] = components.toggle.accessNode(ComponentsState.toggleRect().x, ComponentsState.toggleRect().y); n += 1; }
+            _ = lx2; _ = base2;
+        },
         else => {},
     }
 
@@ -1557,6 +1693,9 @@ fn drawSidebar(
     nav_rects: []const zui.Rect,
     nav_hover_t: []const f32,
     dark_mode: bool,
+    scroll: i32,
+    max_scroll: i32,
+    view_h: i32,
 ) void {
     const nav_bg = if (dark_mode) BG_NAV else zui.Color.rgb(235, 235, 240);
     r.fillRect(zui.Rect.init(0, 0, @intCast(NAV_W), H), nav_bg);
@@ -1567,6 +1706,9 @@ fn drawSidebar(
     r.drawTextScaled("zui", 16, 10, ACCENT, 2);
     const logo_w: i32 = @intCast(r.textWidthScaled("zui", 2));
     r.drawText("gallery", 16 + logo_w + 8, 20, FG_TER);
+
+    // Clip nav + search to the scrollable viewport so items scroll out of sight.
+    r.setClip(zui.Rect.init(0, HDR_H, @intCast(NAV_W), @intCast(view_h)));
 
     for (NAV_ITEMS, 0..) |item, i| {
         const nr = nav_rects[i];
@@ -1581,12 +1723,25 @@ fn drawSidebar(
         r.drawText(item.label, nr.x + 28, nr.y + 10, if (active) FG    else FG_SEC);
     }
 
-    const sx: i32 = HDR_H + 8 + @as(i32, NAV_ITEMS.len) * 44 + 8;
+    const sx: i32 = NAV_TOP + @as(i32, NAV_ITEMS.len) * NAV_STRIDE + 8 - scroll;
     const search_r = zui.Rect.init(8, sx, @intCast(NAV_W - 16), 30);
     r.fillRoundRect(search_r, 6, SEP);
     r.fillRoundRect(zui.Rect.init(search_r.x + 1, search_r.y + 1, search_r.width - 2, search_r.height - 2),
         5, if (dark_mode) BG_INPUT else zui.Color.rgb(250, 250, 255));
     r.drawText("Search...", search_r.x + 10, search_r.y + 7, FG_TER);
+
+    r.clearClip();
+
+    // Scrollbar — only when the nav content overflows the viewport.
+    if (max_scroll > 0 and view_h > 0) {
+        const content_h: i32 = view_h + max_scroll;
+        const track = zui.Rect.init(NAV_W - 8, HDR_H + 2, 5, @intCast(view_h - 4));
+        r.fillRoundRect(track, 2, if (dark_mode) zui.Color.rgba(255, 255, 255, 18) else zui.Color.rgba(0, 0, 0, 18));
+        const thumb_h: i32 = @max(24, @divTrunc(view_h * view_h, content_h));
+        const thumb_y: i32 = HDR_H + 2 + @divTrunc(scroll * (view_h - 4 - thumb_h), max_scroll);
+        const thumb = zui.Rect.init(NAV_W - 8, thumb_y, 5, @intCast(thumb_h));
+        r.fillRoundRect(thumb, 2, if (dark_mode) zui.Color.rgba(255, 255, 255, 70) else zui.Color.rgba(0, 0, 0, 70));
+    }
 
     r.drawText("v0.7  gap-close", 10, @as(i32, @intCast(H)) - 22, FG_TER);
 }
@@ -1605,6 +1760,7 @@ fn drawHeader(r: *zui.Renderer, page: Page, dark_mode: bool) void {
         .about        => "About",        .images       => "Images",
         .data_binding => "Data Binding", .file_dialogs => "File Dialogs",
         .new_widgets  => "New Widgets",
+        .components   => "Components",
     };
     const bx = NAV_W + 20;
     const gw: i32 = @intCast(r.textWidth("zui Gallery"));

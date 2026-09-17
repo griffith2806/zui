@@ -214,6 +214,7 @@ const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 
 // Borderless-fullscreen support.
 extern "user32" fn GetWindowRect(hWnd: HWND, lpRect: *RECT) callconv(std.builtin.CallingConvention.winapi) BOOL;
+extern "user32" fn ScreenToClient(hWnd: HWND, lpPoint: *POINT) callconv(std.builtin.CallingConvention.winapi) BOOL;
 extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: ?HWND, X: INT, Y: INT, cx: INT, cy: INT, uFlags: UINT) callconv(std.builtin.CallingConvention.winapi) BOOL;
 extern "user32" fn MonitorFromWindow(hWnd: HWND, dwFlags: DWORD) callconv(std.builtin.CallingConvention.winapi) ?*anyopaque;
 extern "user32" fn GetMonitorInfoW(hMonitor: *anyopaque, lpmi: *MONITORINFO) callconv(std.builtin.CallingConvention.winapi) BOOL;
@@ -593,6 +594,21 @@ fn wndProc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) callconv(std.builtin.C
                 w.pushEvent(.{ .mouse_move = .{
                     .x = physToLog(x, w.dpi_scale), .y = physToLog(y, w.dpi_scale),
                     .dx = 0, .dy = 0,
+                } });
+            }
+        },
+        WM_MOUSEWHEEL => {
+            if (win) |w| {
+                // Wheel delta is in the high word of wParam (positive = wheel up).
+                const delta: i16 = @bitCast(@as(u16, @truncate(wp >> 16)));
+                // WM_MOUSEWHEEL carries SCREEN coordinates in lParam.
+                var pt = POINT{ .x = @as(i16, @truncate(lp)), .y = @as(i16, @truncate(lp >> 16)) };
+                _ = ScreenToClient(hwnd, &pt);
+                w.pushEvent(.{ .scroll = .{
+                    .x = physToLog(pt.x, w.dpi_scale),
+                    .y = physToLog(pt.y, w.dpi_scale),
+                    .dx = 0,
+                    .dy = @as(f32, @floatFromInt(delta)) / 120.0,
                 } });
             }
         },

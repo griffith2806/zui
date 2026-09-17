@@ -4,6 +4,8 @@ pub const Role = enum {
     window,
     button,
     label,
+    image,
+    link,
     text_field,
     text_area,
     checkbox,
@@ -43,6 +45,10 @@ pub const AccessNode = struct {
     value:     []const u8 = "",
     bounds:    Rect,
     state:     State = .{},
+    /// Nesting level in the accessibility tree: 0 = direct child of the window,
+    /// 1 = child of the preceding depth-0 node, and so on. Nodes are supplied in
+    /// pre-order. Default 0 keeps the historical flat tree (all roots).
+    depth:     u16 = 0,
     /// Called by IInvokeProvider.Invoke() — typically emits a clicked signal.
     invoke_fn: ?*const fn (ctx: *anyopaque) void = null,
     /// Called by IToggleProvider.Toggle() — should flip the checked state.

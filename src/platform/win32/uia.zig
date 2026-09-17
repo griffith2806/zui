@@ -12,12 +12,14 @@
 const std    = @import("std");
 const builtin = @import("builtin");
 const node_mod = @import("../../accessibility/node.zig");
+const tree_mod = @import("../../accessibility/tree.zig");
 
 comptime {
     if (builtin.os.tag != .windows) @compileError("UIA backend is Windows-only");
 }
 
 pub const AccessNode = node_mod.AccessNode;
+pub const AccessTree = tree_mod.AccessTree;
 const Role = node_mod.Role;
 
 // â”€â”€ Win32 primitive types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -203,6 +205,7 @@ const UIA_ButtonControlTypeId     : i32 = 50000;
 const UIA_CheckBoxControlTypeId   : i32 = 50002;
 const UIA_ComboBoxControlTypeId   : i32 = 50003;
 const UIA_EditControlTypeId       : i32 = 50004;
+const UIA_HyperlinkControlTypeId  : i32 = 50005;
 const UIA_GroupControlTypeId      : i32 = 50026;
 const UIA_ListControlTypeId       : i32 = 50008;
 const UIA_ListItemControlTypeId   : i32 = 50007;
@@ -353,6 +356,8 @@ fn controlType(role: Role) i32 {
         .tab          => UIA_TabControlTypeId,
         .tab_panel    => UIA_TabItemControlTypeId,
         .label        => UIA_TextControlTypeId,
+        .image        => UIA_GroupControlTypeId,
+        .link         => UIA_HyperlinkControlTypeId,
         .window       => UIA_WindowControlTypeId,
     };
 }
@@ -360,13 +365,14 @@ fn controlType(role: Role) i32 {
 fn isKeyboardFocusable(role: Role) bool {
     return switch (role) {
         .button, .checkbox, .text_field, .text_area,
-        .slider, .list, .combo_box, .tab => true,
+        .slider, .list, .combo_box, .tab, .link => true,
+        .image => false,
         else => false,
     };
 }
 
 // Returns whether a role supports a given pattern.
-fn roleSupportsInvoke(role: Role)      bool { return role == .button; }
+fn roleSupportsInvoke(role: Role)      bool { return role == .button or role == .link; }
 fn roleSupportsToggle(role: Role)      bool { return role == .checkbox; }
 fn roleSupportsValue(role: Role)       bool {
     return role == .text_field or role == .text_area or role == .slider;
@@ -425,6 +431,9 @@ pub const UiaTree = struct {
     mutex:            SpinLock,
     snapshot:         [96]AccessNode = undefined,
     snapshot_len:     usize          = 0,
+    /// Derived parent/child/sibling relationships for the current snapshot.
+    /// Computed from each node's `depth` (pre-order). Default depth 0 = flat.
+    layout:           AccessTree = .{},
 
     pub fn create(
         alloc: std.mem.Allocator,
@@ -468,6 +477,7 @@ pub const UiaTree = struct {
         const copy_len = @min(nodes.len, self.snapshot.len);
         @memcpy(self.snapshot[0..copy_len], nodes[0..copy_len]);
         self.snapshot_len = copy_len;
+        self.layout = AccessTree.compute(nodes[0..copy_len]);
 
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -687,26 +697,36 @@ pub const WidgetProvider = struct {
         const tree = self.tree;
         tree.mutex.lock();
         defer tree.mutex.unlock();
+        const items = tree.widget_providers.items;
+        const idx: usize = self.index;
+        if (idx >= tree.layout.len) return S_OK;
+
+        // Return the provider at layout index `target` with a fresh reference.
+        const emit = struct {
+            fn at(providers: []const *WidgetProvider, target: i32, out: *?*anyopaque) void {
+                if (target < 0) return;
+                const ti: usize = @intCast(target);
+                if (ti >= providers.len) return;
+                const wp = providers[ti];
+                _ = wp.addRefSelf();
+                out.* = @ptrCast(&wp.fragment);
+            }
+        }.at;
+
         switch (dir) {
             NavigateDirection_Parent => {
-                _ = tree.window_provider.addRefSelf();
-                ppv.* = @ptrCast(&tree.window_provider.fragment);
-            },
-            NavigateDirection_NextSibling => {
-                const next = self.index + 1;
-                if (next < tree.widget_providers.items.len) {
-                    const wp = tree.widget_providers.items[next];
-                    _ = wp.addRefSelf();
-                    ppv.* = @ptrCast(&wp.fragment);
+                const pi = tree.layout.parent[idx];
+                if (pi < 0) {
+                    _ = tree.window_provider.addRefSelf();
+                    ppv.* = @ptrCast(&tree.window_provider.fragment);
+                } else {
+                    emit(items, pi, ppv);
                 }
             },
-            NavigateDirection_PreviousSibling => {
-                if (self.index > 0) {
-                    const wp = tree.widget_providers.items[self.index - 1];
-                    _ = wp.addRefSelf();
-                    ppv.* = @ptrCast(&wp.fragment);
-                }
-            },
+            NavigateDirection_NextSibling     => emit(items, tree.layout.next_sibling[idx], ppv),
+            NavigateDirection_PreviousSibling => emit(items, tree.layout.prev_sibling[idx], ppv),
+            NavigateDirection_FirstChild      => emit(items, tree.layout.first_child[idx], ppv),
+            NavigateDirection_LastChild       => emit(items, tree.layout.last_child[idx], ppv),
             else => {},
         }
         return S_OK;
@@ -1032,15 +1052,19 @@ pub const WindowProvider = struct {
         const items = tree.widget_providers.items;
         switch (dir) {
             NavigateDirection_FirstChild => {
-                if (items.len > 0) {
-                    _ = items[0].addRefSelf();
-                    ppv.* = @ptrCast(&items[0].fragment);
+                const fi = tree.layout.root_first;
+                if (fi >= 0 and @as(usize, @intCast(fi)) < items.len) {
+                    const wp = items[@intCast(fi)];
+                    _ = wp.addRefSelf();
+                    ppv.* = @ptrCast(&wp.fragment);
                 }
             },
             NavigateDirection_LastChild => {
-                if (items.len > 0) {
-                    _ = items[items.len - 1].addRefSelf();
-                    ppv.* = @ptrCast(&items[items.len - 1].fragment);
+                const li = tree.layout.root_last;
+                if (li >= 0 and @as(usize, @intCast(li)) < items.len) {
+                    const wp = items[@intCast(li)];
+                    _ = wp.addRefSelf();
+                    ppv.* = @ptrCast(&wp.fragment);
                 }
             },
             else => {},
@@ -1089,15 +1113,19 @@ pub const WindowProvider = struct {
         const tree = self.tree;
         tree.mutex.lock();
         defer tree.mutex.unlock();
+        // Return the deepest (most specific) node whose bounds contain the point.
+        var best: ?*WidgetProvider = null;
         for (tree.widget_providers.items) |wp| {
             const r = screenBounds(self.hwnd, wp.node.bounds, self.dpi_scale);
             if (x >= r.left and x < r.left + r.width and
                 y >= r.top  and y < r.top  + r.height)
             {
-                _ = wp.addRefSelf();
-                ppv.* = @ptrCast(&wp.fragment);
-                return S_OK;
+                if (best == null or wp.node.depth >= best.?.node.depth) best = wp;
             }
+        }
+        if (best) |wp| {
+            _ = wp.addRefSelf();
+            ppv.* = @ptrCast(&wp.fragment);
         }
         return S_OK;
     }
