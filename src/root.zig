@@ -104,7 +104,8 @@ pub const TabView     = @import("widgets/tab_view.zig").TabView;
 pub const ScrollArea  = @import("widgets/scroll_area.zig").ScrollArea;
 pub const ListView    = @import("widgets/list_view.zig").ListView;
 pub const DataSource  = @import("widgets/list_view.zig").DataSource;
-pub const DropDown    = @import("widgets/dropdown.zig").DropDown;
+pub const DropDown     = @import("widgets/dropdown.zig").DropDown;
+pub const DropDownStyle = @import("widgets/dropdown.zig").DropDownStyle;
 pub const Tooltip     = @import("widgets/tooltip.zig").Tooltip;
 pub const Dialog      = @import("widgets/dialog.zig").Dialog;
 pub const MenuItem    = @import("widgets/menu.zig").MenuItem;
@@ -142,6 +143,7 @@ test {
     _ = @import("widgets/spinner.zig");
     _ = @import("widgets/text_field.zig");
     _ = @import("widgets/toggle.zig");
+    _ = @import("widgets/dropdown.zig");
     if (@import("builtin").os.tag == .windows) {
         _ = @import("platform/win32/uia.zig");
     }

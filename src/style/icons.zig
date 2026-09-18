@@ -9,6 +9,8 @@
 pub const settings = "\u{E713}"; // gear / cog
 pub const back = "\u{E72B}"; // chevron left
 pub const forward = "\u{E72A}"; // chevron right
+pub const chevron_down = "\u{E70D}"; // chevron down
+pub const chevron_up = "\u{E70E}"; // chevron up
 pub const close = "\u{E711}"; // X
 pub const accept = "\u{E73E}"; // checkmark
 pub const cancel = "\u{E711}"; // X (alias)
