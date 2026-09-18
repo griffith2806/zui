@@ -255,6 +255,21 @@ pub const DropDown = struct {
                 }
                 return false;
             },
+            .scroll => |s| {
+                if (!self.open) return false;
+                const pt = Point{ .x = s.x, .y = s.y };
+                if (list.contains(pt)) {
+                    const total: u32 = @intCast(self.items.len);
+                    const visible = self.visibleCount();
+                    const max: u32 = if (total > visible) total - visible else 0;
+                    const delta: i32 = if (s.dy > 0) -1 else 1;
+                    var next: i64 = @as(i64, @intCast(self.scroll_offset)) + delta;
+                    next = std.math.clamp(next, 0, @as(i64, @intCast(max)));
+                    self.scroll_offset = @intCast(next);
+                    return true;
+                }
+                return false;
+            },
             .focus_gained => { self.focused = true; return false; },
             .focus_lost => {
                 self.focused = false;
@@ -358,8 +373,7 @@ test "DropDown scroll clamps and scrollTo keeps selection visible" {
     try std.testing.expectEqual(@as(usize, 0), dd.selected);
 }
 
-test "DropDown accessNode exposes combo_box and accessNodes emits children" {
-    const items = [_][]const u8{ "A", "B", "C" };
+test "DropDown accessNode exposes combo_box and accessNodes emits children" {    const items = [_][]const u8{ "A", "B", "C" };
     var dd = DropDown{ .items = &items, .open = true, .selected = 1 };
     const trigger = Rect.init(0, 0, 100, 30);
 
@@ -379,4 +393,29 @@ test "DropDown accessNode exposes combo_box and accessNodes emits children" {
     // Closed dropdown emits no children.
     dd.open = false;
     try std.testing.expectEqual(@as(usize, 0), dd.accessNodes(trigger, &buf));
+}
+
+test "DropDown wheel scrolls the open list and clamps at the ends" {
+    var items: [8][]const u8 = .{ "a", "b", "c", "d", "e", "f", "g", "h" };
+    var dd = DropDown{ .items = &items, .open = true, .selected = 0 };
+    const trigger = Rect.init(0, 0, 100, 30);
+    // List is at y=30..210 (6 visible rows of 30px).
+
+    // Wheel down (dy < 0) advances the window toward the end.
+    _ = dd.handleEvent(.{ .scroll = .{ .x = 50, .y = 40, .dx = 0, .dy = -1 } }, trigger);
+    try std.testing.expectEqual(@as(u32, 1), dd.scroll_offset);
+
+    // Clamped at max (8 - 6 = 2).
+    _ = dd.handleEvent(.{ .scroll = .{ .x = 50, .y = 40, .dx = 0, .dy = -1 } }, trigger);
+    _ = dd.handleEvent(.{ .scroll = .{ .x = 50, .y = 40, .dx = 0, .dy = -1 } }, trigger);
+    _ = dd.handleEvent(.{ .scroll = .{ .x = 50, .y = 40, .dx = 0, .dy = -1 } }, trigger);
+    try std.testing.expectEqual(@as(u32, 2), dd.scroll_offset);
+
+    // Wheel up (dy > 0) steps back and clamps at 0.
+    _ = dd.handleEvent(.{ .scroll = .{ .x = 50, .y = 40, .dx = 0, .dy = 1 } }, trigger);
+    try std.testing.expectEqual(@as(u32, 1), dd.scroll_offset);
+
+    // A scroll outside the list is ignored.
+    _ = dd.handleEvent(.{ .scroll = .{ .x = 500, .y = 500, .dx = 0, .dy = -1 } }, trigger);
+    try std.testing.expectEqual(@as(u32, 1), dd.scroll_offset);
 }
