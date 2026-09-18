@@ -1490,6 +1490,9 @@ fn buildAccessibilityTree(
             if (n < nodes.len) { nodes[n] = inputs.text_area.accessNode("Editor", zui.Rect.init(lx, base + 40, 330, 220)); n += 1; }
             if (n < nodes.len) { nodes[n] = inputs.list_view.accessNode(zui.Rect.init(lx + 380, base + 40, 260, 180), false); n += 1; }
             if (n < nodes.len) { nodes[n] = inputs.dropdown.accessNode(zui.Rect.init(lx + 380, base + 278, 260, 36), false); n += 1; }
+            if (inputs.dropdown.open and n < nodes.len) {
+                n += inputs.dropdown.accessNodes(zui.Rect.init(lx + 380, base + 278, 260, 36), nodes[n..]);
+            }
         },
         .overlays => {
             if (n < nodes.len) {
