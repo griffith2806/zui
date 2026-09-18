@@ -14,6 +14,10 @@ pub const TextField = struct {
     view_start: usize = 0,
     focused:    bool  = false,
     hovered:    bool  = false,
+    /// When false the field is inert (MUI-style disabled form input): it
+    /// ignores every event, renders dimmed, and reports disabled to UIA.
+    /// Callers clear it when a surrounding form finishes loading.
+    enabled:    bool  = true,
     /// Shown when the field is empty. Callers set this to the design's placeholder
     /// text (e.g. "you@rove.gg"); the default keeps older call sites unchanged.
     placeholder: []const u8 = "Type here...",
@@ -58,7 +62,7 @@ pub const TextField = struct {
             .name   = name,
             .value  = value,
             .bounds = rect,
-            .state  = .{ .focused = self.focused },
+            .state  = .{ .focused = self.focused, .enabled = self.enabled },
         };
     }
 
@@ -66,14 +70,17 @@ pub const TextField = struct {
         // Rounded background
         r.fillRoundRect(rect, 6, theme.input_bg);
 
-        // Border — brighter when focused
-        const border = if (self.focused) theme.input_border_focused else theme.input_border;
+        // Border — brighter when focused, never bright while disabled.
+        const border = if (self.enabled and self.focused) theme.input_border_focused else theme.input_border;
         r.fillRoundRect(rect, 6, border);
         r.fillRoundRect(Rect.init(rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2), 5, theme.input_bg);
 
         const tx = rect.x + 10;
         const ty = rect.y + @as(i32, @intCast(rect.height / 2)) - 7;
         const usable_w = rect.width -| 20;
+
+        // A disabled field renders its value dimmed, in the hint colour.
+        const text_color = if (self.enabled) theme.fg else theme.input_hint;
 
         const committed = self.text.items;
         const composition = if (self.ime_active) self.ime_composition.items else "";
@@ -91,7 +98,7 @@ pub const TextField = struct {
             while (self.view_start > 0 and self.view_start > self.cursor) {
                 self.view_start -= prevCharLen(committed, self.view_start);
             }
-            r.drawText(committed[self.view_start..], tx, ty, theme.fg);
+            r.drawText(committed[self.view_start..], tx, ty, text_color);
 
             // Draw the provisional composition string after the committed text,
             // using a slightly dimmed colour so users can distinguish it.
@@ -107,7 +114,7 @@ pub const TextField = struct {
             r.drawText(self.placeholder, tx, ty, theme.input_hint);
         }
 
-        if (self.focused and !self.ime_active) {
+        if (self.enabled and self.focused and !self.ime_active) {
             const pre = if (self.cursor > self.view_start)
                 committed[self.view_start..self.cursor]
             else
@@ -122,6 +129,7 @@ pub const TextField = struct {
     }
 
     pub fn handleEvent(self: *TextField, event: Event, rect: Rect, alloc: std.mem.Allocator) bool {
+        if (!self.enabled) return false;
         switch (event) {
             .mouse_move => |m| {
                 self.hovered = rect.contains(.{ .x = m.x, .y = m.y });
@@ -237,4 +245,33 @@ fn prevCharLen(bytes: []const u8, pos: usize) usize {
 fn nextCharLen(bytes: []const u8, pos: usize) usize {
     if (pos >= bytes.len) return 0;
     return std.unicode.utf8ByteSequenceLength(bytes[pos]) catch 1;
+}
+
+test "TextField disabled ignores input and reports disabled" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var field = TextField{ .enabled = false };
+    defer field.deinit(alloc);
+
+    const rect = Rect.init(0, 0, 200, 34);
+
+    // A click inside the rect must not focus the field.
+    _ = field.handleEvent(.{ .mouse_press = .{ .x = 10, .y = 10, .button = .left } }, rect, alloc);
+    try std.testing.expect(!field.focused);
+
+    // Typing must not insert characters.
+    _ = field.handleEvent(.{ .char_input = 'a' }, rect, alloc);
+    try std.testing.expectEqual(@as(usize, 0), field.text.items.len);
+
+    const node = field.accessNode("Email", rect, alloc);
+    try std.testing.expect(!node.state.enabled);
+
+    // Re-enabling restores interactivity.
+    field.enabled = true;
+    _ = field.handleEvent(.{ .mouse_press = .{ .x = 10, .y = 10, .button = .left } }, rect, alloc);
+    try std.testing.expect(field.focused);
+    _ = field.handleEvent(.{ .char_input = 'a' }, rect, alloc);
+    try std.testing.expectEqualStrings("a", field.text.items);
 }

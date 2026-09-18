@@ -119,6 +119,7 @@ pub const Avatar       = @import("widgets/avatar.zig").Avatar;
 pub const Badge        = @import("widgets/badge.zig").Badge;
 pub const Link         = @import("widgets/link.zig").Link;
 pub const ProgressRing = @import("widgets/progress_ring.zig").ProgressRing;
+pub const Spinner      = @import("widgets/spinner.zig").Spinner;
 pub const Toggle       = @import("widgets/toggle.zig").Toggle;
 
 // File dialogs
@@ -135,8 +136,11 @@ test {
     _ = @import("widgets/image_view.zig");
     _ = @import("widgets/avatar.zig");
     _ = @import("widgets/badge.zig");
+    _ = @import("widgets/button.zig");
     _ = @import("widgets/link.zig");
     _ = @import("widgets/progress_ring.zig");
+    _ = @import("widgets/spinner.zig");
+    _ = @import("widgets/text_field.zig");
     _ = @import("widgets/toggle.zig");
     if (@import("builtin").os.tag == .windows) {
         _ = @import("platform/win32/uia.zig");
