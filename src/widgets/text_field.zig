@@ -14,6 +14,9 @@ pub const TextField = struct {
     view_start: usize = 0,
     focused:    bool  = false,
     hovered:    bool  = false,
+    /// Shown when the field is empty. Callers set this to the design's placeholder
+    /// text (e.g. "you@rove.gg"); the default keeps older call sites unchanged.
+    placeholder: []const u8 = "Type here...",
     // IME composition state — provisional string held in owned buffer.
     // When ime_active, rendered inline after committed text with underline.
     // Also reflected in accessNode() value so UIA screen readers see it.
@@ -101,7 +104,7 @@ pub const TextField = struct {
                 r.fillRect(Rect.init(comp_x, ty + 16, @intCast(comp_w), 1), theme.input_hint);
             }
         } else {
-            r.drawText("Type here...", tx, ty, theme.input_hint);
+            r.drawText(self.placeholder, tx, ty, theme.input_hint);
         }
 
         if (self.focused and !self.ime_active) {
