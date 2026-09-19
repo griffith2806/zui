@@ -6,6 +6,7 @@ const Corners = paint.Corners;
 const GradientStop = paint.GradientStop;
 const bfont = @import("font.zig");
 const Image = @import("../image.zig").Image;
+const rounded_rect = @import("../rounded_rect.zig");
 
 // ── Win32 GDI (text rendering on the memory DC) ──────────────────────────────
 
@@ -611,7 +612,7 @@ pub const Renderer = struct {
     /// `clip_phys` defines the physical pixel region to actually write into
     /// (already intersected with the frame buffer and any logical clip).
     fn fillRoundRectPhys(self: *Renderer, rect: Rect, radius: u32, clip_phys: Rect, color: Color) void {
-        const r: i32 = @intCast(@min(radius, @min(rect.width, rect.height) / 2));
+        const r: i32 = @intCast(rounded_rect.clampCornerRadius(radius, rect.width, rect.height));
         const bx0: i32 = @max(@max(0, clip_phys.x), rect.x);
         const by0: i32 = @max(@max(0, clip_phys.y), rect.y);
         const bx1: i32 = @min(@min(@as(i32, @intCast(self.width)),  rect.right()),  clip_phys.right());

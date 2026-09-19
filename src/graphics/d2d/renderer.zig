@@ -14,6 +14,7 @@ const Rect    = @import("../../layout/geometry.zig").Rect;
 const Image   = @import("../image.zig").Image;
 const paint   = @import("../../style/paint.zig");
 const text_metrics = @import("../text_metrics.zig");
+const rounded_rect = @import("../rounded_rect.zig");
 
 comptime {
     if (builtin.os.tag != .windows) @compileError("d2d renderer is Windows-only");
@@ -1381,7 +1382,9 @@ pub const Renderer = struct {
 
     pub fn fillRoundRect(self: *Renderer, rect: Rect, radius: u32, color: Color) void {
         if (!self.begin_draw_called) return;
-        const r: FLOAT = toDipU(radius);
+        // Clamp first: D2D clamps radiusX/radiusY per axis independently, so an
+        // over-large radius would draw an ellipse instead of a pill.
+        const r: FLOAT = toDipU(rounded_rect.clampCornerRadius(radius, rect.width, rect.height));
         const rr = D2D1_ROUNDED_RECT{
             .rect = .{
                 .left   = toDip(rect.x),
