@@ -144,6 +144,7 @@ test {
     _ = @import("widgets/text_field.zig");
     _ = @import("widgets/toggle.zig");
     _ = @import("widgets/dropdown.zig");
+    _ = @import("graphics/text_metrics.zig");
     if (@import("builtin").os.tag == .windows) {
         _ = @import("platform/win32/uia.zig");
     }

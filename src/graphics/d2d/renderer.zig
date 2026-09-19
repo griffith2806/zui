@@ -13,6 +13,7 @@ const Color   = @import("../../style/color.zig").Color;
 const Rect    = @import("../../layout/geometry.zig").Rect;
 const Image   = @import("../image.zig").Image;
 const paint   = @import("../../style/paint.zig");
+const text_metrics = @import("../text_metrics.zig");
 
 comptime {
     if (builtin.os.tag != .windows) @compileError("d2d renderer is Windows-only");
@@ -1797,9 +1798,11 @@ pub const Renderer = struct {
         const hr_m = layout.vtbl.GetMetrics(@ptrCast(layout), &metrics);
         if (hr_m != S_OK) return @intCast(text.len * 8);
 
-        // metrics.width is in DIPs. Since D2D coordinate system == logical pixels
-        // (we pass logical coords directly), this is already in logical pixels.
-        return @intFromFloat(@ceil(metrics.width));
+        // Use the width INCLUDING trailing whitespace: `metrics.width` drops the
+        // trailing space of the last line, so a lone space would measure 0 and a
+        // pen advanced by that width (word wrapping, inter-word gaps) would
+        // collapse the gap. See graphics/text_metrics.zig.
+        return text_metrics.widthFromDwriteMetrics(metrics.widthIncludingTrailingWhitespace);
     }
 
     /// Called by app.zig after drawing to present the frame.
